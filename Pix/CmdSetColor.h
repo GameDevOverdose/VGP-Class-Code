@@ -15,7 +15,8 @@ public:
 		return
 			"SetColor(r, g, b)\n"
 			"\n"
-			"- Sets the color using red, green, and blue. Values are from 0.0 to 1.0.";
+			"- Sets the color of the next pixel using red, green and blue\n"
+			"- Values are from 0.0 to 1.0"	;
 	}
 
 	bool Execute(const std::vector<std::string>& params) override;
