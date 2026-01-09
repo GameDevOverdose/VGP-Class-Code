@@ -1,5 +1,5 @@
 #include "MathHelper.h"
-#include <math.h>
+#include <cmath>
 
 bool MathHelper::CheckEqual(float a, float b)
 {
