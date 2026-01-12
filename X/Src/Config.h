@@ -26,7 +26,7 @@ public:
 	bool GetBool(const char* key, bool default = false) const;
 	float GetFloat(const char* key, float default = 0.0f) const;
 	const char* GetString(const char* key, const char* default = "") const;
-	
+
 	void SetInt(const char* key, int value);
 	void SetBool(const char* key, bool value);
 	void SetFloat(const char* key, float value);
