@@ -20,8 +20,13 @@
 #include "Texture.h"
 #include "TextureManager.h"
 #include "Timer.h"
+#include "Window.h"
 
+#ifdef _WIN32
 #pragma comment(lib, "FW1FontWrapper.lib")
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#endif
 
 using namespace X;
 
@@ -76,8 +81,8 @@ namespace
 		float size, x, y;
 		uint32_t color;
 	};
-	
-	HWND myWindow = nullptr;
+
+	Window myWindow;
 	bool initialized = false;
 
 	std::random_device myRandomDevice{};
@@ -102,101 +107,61 @@ namespace
 		uint8_t b = (uint8_t)(color.b * 255);
 		return 0xff000000 | (b << 16) | (g << 8) | r;
 	}
-}
 
-LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
-{
-	switch (msg)
+#ifdef _WIN32
+	// Helper for string conversion on Windows
+	std::wstring ToWideString(const char* str)
 	{
-	case WM_SYSCOMMAND:
-		if ((wParam & 0xfff0) == SC_KEYMENU) // Disable ALT application menu
-			return 0;
-		break;
-	case WM_DESTROY:
-		PostQuitMessage(0);
-		return 0;
+		int len = (int)strlen(str);
+		int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, str, len, NULL, 0);
+		std::wstring wstr(sizeNeeded, 0);
+		MultiByteToWideChar(CP_UTF8, 0, str, len, &wstr[0], sizeNeeded);
+		return wstr;
 	}
-
-	return DefWindowProcA(hWnd, msg, wParam, lParam);
+#else
+	// Simple conversion for non-Windows platforms
+	std::wstring ToWideString(const char* str)
+	{
+		std::wstring wstr;
+		while (*str)
+		{
+			wstr += static_cast<wchar_t>(*str);
+			++str;
+		}
+		return wstr;
+	}
+#endif
 }
 
 void X::Start(const char* configFileName)
 {
 	XASSERT(!initialized, "[XEngine] Engine already started.");
 
+#ifdef _WIN32
 	CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+#endif
 
 	Config::StaticInitialize(configFileName);
-	
-	HINSTANCE instance = GetModuleHandleA(nullptr);
+
 	const char* appName = Config::Get()->GetString("AppName", "X");
 	const int clientWidth = Config::Get()->GetInt("WinWidth", 1280);
 	const int clientHeight = Config::Get()->GetInt("WinHeight", 720);
-	
-	// Every Windows Window requires at least oen window object. Three things are involved:
-	// 1)	Register a window class.
-	// 2)	Create a window object.
-	// 3)	Retrieve and dispatch messages for this window.
 
-	// Register class
-	WNDCLASSEXA wcex;
-	wcex.cbSize = sizeof(WNDCLASSEXA);
-	wcex.style = CS_HREDRAW | CS_VREDRAW;
-	wcex.lpfnWndProc = WndProc;
-	wcex.cbClsExtra = 0;
-	wcex.cbWndExtra = 0;
-	wcex.hInstance = instance;
-	wcex.hIcon = LoadIconA(nullptr, IDI_APPLICATION);
-	wcex.hCursor = LoadCursorA(nullptr, IDC_ARROW);
-	wcex.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
-	wcex.lpszMenuName = nullptr;
-	wcex.lpszClassName = appName;
-	wcex.hIconSm = LoadIconA(nullptr, IDI_APPLICATION);
+	// Initialize window using GLFW
+	myWindow.Initialize(appName, clientWidth, clientHeight);
+	XASSERT(myWindow.IsActive(), "[XEngine] Failed to create window.");
 
-	XVERIFY(RegisterClassExA(&wcex), "[Window] Failed to register window class.");
+	GLFWwindow* windowHandle = myWindow.GetWindowHandle();
 
-	// Compute the correct window dimension
-	RECT rc = { 0, 0, static_cast<LONG>(clientWidth), static_cast<LONG>(clientHeight) };
-	AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
-	
-	const int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-	const int screenHeight = GetSystemMetrics(SM_CYSCREEN);
-	const int winWidth = X::Math::Min<int>(rc.right - rc.left, screenWidth);
-	const int winHeight = X::Math::Min<int>(rc.bottom - rc.top, screenHeight);
-	const int left = (screenWidth - winWidth) >> 1;
-	const int top = (screenHeight - winHeight) >> 1;
-
-	// Create window
-	myWindow = CreateWindowA
-	(
-		appName,
-		appName,
-		WS_OVERLAPPEDWINDOW,
-		left,
-		top,
-		winWidth,
-		winHeight,
-		nullptr,
-		nullptr,
-		instance,
-		nullptr
-	);
-
-	XASSERT(myWindow != nullptr, "[XEngine] Failed to create window.");
-
-	ShowWindow(myWindow, true);
-
-	XVERIFY(SetCursorPos(screenWidth >> 1, screenHeight >> 1), "[Window] Failed to set cursor position.");
-	
 	// Initialize all engine systems
 	AudioSystem::StaticInitialize();
-	GraphicsSystem::StaticInitialize(myWindow, Config::Get()->GetBool("FullScreen", false));
-	InputSystem::StaticInitialize(myWindow);
+	GraphicsSystem::StaticInitialize(windowHandle, Config::Get()->GetBool("FullScreen", false));
+	InputSystem::StaticInitialize(windowHandle);
 	SimpleDraw::Initialize(1024 * 1024);
 	SpriteRenderer::StaticInitialize();
 	SoundEffectManager::StaticInitialize(Config::Get()->GetString("SoundPath", "../Assets/Sounds"));
 	TextureManager::StaticInitialize(Config::Get()->GetString("TexturePath", "../Assets/Images"));
-	Gui::Initialize(myWindow);
+	Gui::Initialize(windowHandle);
 
 	// Initialize camera
 	myCamera.SetFOV(60.0f * Math::kDegToRad);
@@ -217,20 +182,12 @@ void X::Run(GameLoop gameLoop)
 	myTimer.Initialize();
 
 	// Start the main loop
-	bool quit = false;
-	while (!quit)
+	while (myWindow.IsActive())
 	{
-		MSG msg = {};
-		while (PeekMessage(&msg, 0, 0, 0, PM_REMOVE))
-		{
-			TranslateMessage(&msg);
-			DispatchMessage(&msg);
+		// Process window messages
+		myWindow.ProcessMessage();
 
-			if (msg.message == WM_QUIT)
-				quit = true;
-		}
-
-		if (quit)
+		if (!myWindow.IsActive())
 			break;
 
 		// Update input and timer
@@ -248,7 +205,8 @@ void X::Run(GameLoop gameLoop)
 		// Run game loop
 		if (gameLoop(kDeltaTime))
 		{
-			PostQuitMessage(0);
+			// User requested quit
+			break;
 		}
 
 		// Begin scene
@@ -329,17 +287,14 @@ void X::Stop()
 	GraphicsSystem::StaticTerminate();
 	AudioSystem::StaticTerminate();
 
-	// Destroy the window
-	DestroyWindow(myWindow);
-
-	// Unregister window class
-	HINSTANCE instance = GetModuleHandleA(nullptr);
-	const char* appName = Config::Get()->GetString("AppName", "X");
-	UnregisterClassA(appName, instance);
+	// Terminate window
+	myWindow.Terminate();
 
 	Config::StaticTerminate();
 
+#ifdef _WIN32
 	CoUninitialize();
+#endif
 
 	// Engine shutdown
 	initialized = false;
@@ -416,28 +371,46 @@ void X::ClearAllTextures()
 	return TextureManager::Get()->Clear();
 }
 
+// Forward declarations for macOS implementations (in PlatformMac.mm)
+#ifdef __APPLE__
+extern "C" bool X_OpenFileDialog(char* fileName, int maxPath, const char* title, const char* filter);
+extern "C" bool X_SaveFileDialog(char* fileName, int maxPath, const char* title, const char* filter);
+#endif
+
 bool X::OpenFileDialog(char fileName[MAX_PATH], const char* title, const char* filter)
 {
+#ifdef _WIN32
 	OPENFILENAMEA ofn = {};
 	ofn.lStructSize = sizeof(ofn);
-	ofn.hwndOwner = myWindow;
+	ofn.hwndOwner = glfwGetWin32Window(myWindow.GetWindowHandle());
 	ofn.lpstrFilter = filter;
 	ofn.lpstrFile = fileName;
 	ofn.nMaxFile = MAX_PATH;
 	ofn.lpstrTitle = title;
 	return GetOpenFileNameA(&ofn);
+#elif defined(__APPLE__)
+	return X_OpenFileDialog(fileName, MAX_PATH, title, filter);
+#else
+	return false;
+#endif
 }
 
 bool X::SaveFileDialog(char fileName[MAX_PATH], const char* title, const char* filter)
 {
+#ifdef _WIN32
 	OPENFILENAMEA ofn = {};
 	ofn.lStructSize = sizeof(ofn);
-	ofn.hwndOwner = myWindow;
+	ofn.hwndOwner = glfwGetWin32Window(myWindow.GetWindowHandle());
 	ofn.lpstrFilter = filter;
 	ofn.lpstrFile = fileName;
 	ofn.nMaxFile = MAX_PATH;
 	ofn.lpstrTitle = title;
 	return GetSaveFileNameA(&ofn);
+#elif defined(__APPLE__)
+	return X_SaveFileDialog(fileName, MAX_PATH, title, filter);
+#else
+	return false;
+#endif
 }
 
 void X::PlaySoundOneShot(SoundId soundId)
@@ -592,20 +565,14 @@ void X::DrawScreenGrid(uint32_t cellSize, const Color& color)
 void X::DrawScreenText(const char* str, float x, float y, float size, const Color& color)
 {
 	XASSERT(initialized, "[XEngine] Engine not started.");
-	int len = (int)strlen(str);
-	int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, str, len, NULL, 0);
-	std::wstring wstr(sizeNeeded, 0);
-	MultiByteToWideChar(CP_UTF8, 0, str, len, &wstr[0], sizeNeeded);
+	std::wstring wstr = ToWideString(str);
 	myTextCommands.emplace_back(std::move(wstr), size, x, y, ToColor(color));
 }
 
 float X::GetTextWidth(const char* str, float size)
 {
 	XASSERT(initialized, "[XEngine] Engine not started.");
-	int len = (int)strlen(str);
-	int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, str, len, NULL, 0);
-	std::wstring wstr(sizeNeeded, 0);
-	MultiByteToWideChar(CP_UTF8, 0, str, len, &wstr[0], sizeNeeded);
+	std::wstring wstr = ToWideString(str);
 	return myFont.GetStringWidth(wstr.c_str(), size);
 }
 

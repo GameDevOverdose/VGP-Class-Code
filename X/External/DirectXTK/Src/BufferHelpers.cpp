@@ -1,7 +1,7 @@
 //--------------------------------------------------------------------------------------
 // File: BufferHelpers.cpp
 //
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 //
 // http://go.microsoft.com/fwlink/?LinkId=248929
@@ -33,7 +33,7 @@ HRESULT DirectX::CreateStaticBuffer(
     if (!device || !ptr || !count || !stride)
         return E_INVALIDARG;
 
-    uint64_t sizeInbytes = uint64_t(count) * uint64_t(stride);
+    const uint64_t sizeInbytes = uint64_t(count) * uint64_t(stride);
 
     static constexpr uint64_t c_maxBytes = D3D11_REQ_RESOURCE_SIZE_IN_MEGABYTES_EXPRESSION_A_TERM * 1024u * 1024u;
     static_assert(c_maxBytes <= UINT32_MAX, "Exceeded integer limits");
@@ -255,7 +255,7 @@ HRESULT DirectX::CreateTextureFromMemory(
 
         if (desc.MipLevels != 1)
         {
-#if defined(_XBOX_ONE) && defined(_TITLE)
+        #if defined(_XBOX_ONE) && defined(_TITLE)
             ComPtr<ID3D11Texture2D> staging;
             desc.MipLevels = 1;
             desc.Usage = D3D11_USAGE_STAGING;
@@ -268,9 +268,9 @@ HRESULT DirectX::CreateTextureFromMemory(
             d3dContext->CopySubresourceRegion(tex.Get(), 0, 0, 0, 0, staging.Get(), 0, nullptr);
             UINT64 copyFence = d3dContext->InsertFence(0);
             while (device->IsFencePending(copyFence)) { SwitchToThread(); }
-#else
+        #else
             d3dContext->UpdateSubresource(tex.Get(), 0, nullptr, initData.pSysMem, initData.SysMemPitch, 0);
-#endif
+        #endif
             d3dContext->GenerateMips(srv.Get());
         }
 
@@ -355,11 +355,14 @@ HRESULT DirectX::CreateTextureFromMemory(
 
 //--------------------------------------------------------------------------------------
 _Use_decl_annotations_
-void Internal::ConstantBufferBase::CreateBuffer(
+void Private::ConstantBufferBase::CreateBuffer(
     ID3D11Device* device,
     size_t bytes,
     ID3D11Buffer** pBuffer)
 {
+    if (!device)
+        throw std::invalid_argument("Direct3D device is null");
+
     if (!pBuffer)
         throw std::invalid_argument("ConstantBuffer needs valid buffer parameter");
 
@@ -373,7 +376,7 @@ void Internal::ConstantBufferBase::CreateBuffer(
 
 #if defined(_XBOX_ONE) && defined(_TITLE)
 
-    Microsoft::WRL::ComPtr<ID3D11DeviceX> deviceX;
+    ComPtr<ID3D11DeviceX> deviceX;
     ThrowIfFailed(device->QueryInterface(IID_GRAPHICS_PPV_ARGS(deviceX.GetAddressOf())));
 
     ThrowIfFailed(deviceX->CreatePlacementBuffer(&desc, nullptr, pBuffer));

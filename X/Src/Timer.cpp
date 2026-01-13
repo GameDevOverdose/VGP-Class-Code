@@ -17,19 +17,14 @@ Timer::Timer()
 	, mFrameSinceLastSecond(0.0f)
 	, mFramesPerSecond(0.0f)
 {
-	mTicksPerSecond.QuadPart = 0;
-	mLastTick.QuadPart = 0;
-	mCurrentTick.QuadPart = 0;
 }
 
 //----------------------------------------------------------------------------------------------------
 
 void Timer::Initialize()
 {
-	// Get the system clock frequency and current tick
-	QueryPerformanceFrequency(&mTicksPerSecond);
-	QueryPerformanceCounter(&mCurrentTick);
-
+	mStartTime = Clock::now();
+	mCurrentTick = mStartTime;
 	mLastTick = mCurrentTick;
 	
 	// Reset
@@ -45,11 +40,15 @@ void Timer::Initialize()
 void Timer::Update()
 {
 	// Get the current tick count
-	QueryPerformanceCounter(&mCurrentTick);
+	mCurrentTick = Clock::now();
 
-	// Calculate the total time and elapsed time
-	mElapsedTime = static_cast<float>(mCurrentTick.QuadPart - mLastTick.QuadPart) / mTicksPerSecond.QuadPart;
-	mTotalTime += mElapsedTime;
+	// Calculate elapsed time in seconds
+	auto elapsed = std::chrono::duration<float>(mCurrentTick - mLastTick);
+	mElapsedTime = elapsed.count();
+	
+	// Calculate total time
+	auto total = std::chrono::duration<float>(mCurrentTick - mStartTime);
+	mTotalTime = total.count();
 
 	// Update the last tick count
 	mLastTick = mCurrentTick;

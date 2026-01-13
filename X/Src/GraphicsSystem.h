@@ -7,13 +7,14 @@
 #define INCLUDED_XENGINE_GRAPHICSSYSTEM_H
 
 #include "XColors.h"
+#include <GLFW/glfw3.h>
 
 namespace X
 {
 	class GraphicsSystem
 	{
 	public:
-		static void StaticInitialize(HWND window, bool fullscreen);
+		static void StaticInitialize(GLFWwindow* window, bool fullscreen);
 		static void StaticTerminate();
 		static GraphicsSystem* Get();
 
@@ -24,7 +25,7 @@ namespace X
 		GraphicsSystem(const GraphicsSystem&) = delete;
 		GraphicsSystem& operator=(const GraphicsSystem&) = delete;
 
-		void Initialize(HWND window, bool fullscreen);
+		void Initialize(GLFWwindow* window, bool fullscreen);
 		void Terminate();
 
 		void BeginRender(const Color& clearColor = Colors::Black);
@@ -46,7 +47,7 @@ namespace X
 		ID3D11DeviceContext* GetContext()	{ return mImmediateContext; }
 
 	private:
-		friend LRESULT CALLBACK GraphicsSystemMessageHandler(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
+		static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
 
 		ID3D11Device* mD3DDevice;
 		ID3D11DeviceContext* mImmediateContext;

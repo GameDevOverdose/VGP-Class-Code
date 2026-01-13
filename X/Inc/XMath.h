@@ -9,6 +9,9 @@
 #include <math.h>
 #include <vector>
 
+// Small epsilon for floating point comparisons
+constexpr float kEpsilon = 0.0001f;
+
 namespace X {
 namespace Math {
 
@@ -77,7 +80,7 @@ struct Vector4
 	constexpr Vector4() noexcept : Vector4{ 0.0f } {}
 	constexpr Vector4(float f) noexcept : Vector4{ f, f, f, f } {}
 	constexpr Vector4(float x, float y, float z, float w) noexcept : x{ x }, y{ y }, z{ z }, w{ w } {}
-	
+
 	Vector4 operator-() const					{ return Vector4(-x, -y, -z, -w); }
 	Vector4 operator+(const Vector4& rhs) const	{ return Vector4(x + rhs.x, y + rhs.y, z + rhs.z, w + rhs.w); }
 	Vector4 operator-(const Vector4& rhs) const	{ return Vector4(x - rhs.x, y - rhs.y, z - rhs.z, w - rhs.w); }
@@ -457,7 +460,7 @@ inline float Sign(float value)										{ return (value >= 0.0f) ? 1.0f : -1.0f;
 inline float Sqr(float value)										{ return value * value; }
 inline float Sqrt(float value)										{ return sqrtf(value); }
 
-inline bool Compare(float a, float b, float epsilon = FLT_MIN)		{ return Abs(a - b) <= epsilon; }
+inline bool Compare(float a, float b, float epsilon = kEpsilon)		{ return Abs(a - b) <= epsilon; }
 inline bool IsZero(float value)										{ return Compare(value, 0.0f); }
 inline bool IsZero(const Vector2& v)								{ return IsZero(v.x) && IsZero(v.y); }
 inline bool IsZero(const Vector3& v)								{ return IsZero(v.x) && IsZero(v.y) && IsZero(v.z); }
@@ -547,7 +550,7 @@ inline Matrix3 Adjoint(const Matrix3& m)
 		-(m._11 * m._23 - m._13 * m._21),
 
 		(m._21 * m._32 - m._22 * m._31),
-		-(m._11 * m._32 - m._12 * m._31), 
+		-(m._11 * m._32 - m._12 * m._31),
 		(m._11 * m._22 - m._12 * m._21)
 	);
 }

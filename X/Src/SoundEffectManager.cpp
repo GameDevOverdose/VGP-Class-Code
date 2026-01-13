@@ -7,9 +7,12 @@
 #include "SoundEffectManager.h"
 
 #include "AudioSystem.h"
-#include <DirectXTK/Inc/Audio.h>
 
+#ifdef _WIN32
+#include <DirectXTK/Inc/Audio.h>
 using namespace DirectX;
+#endif
+
 using namespace X;
 
 namespace
@@ -67,6 +70,7 @@ void SoundEffectManager::SetRootPath(const char* path)
 
 SoundId SoundEffectManager::Load(const char* fileName)
 {
+#ifdef _WIN32
 	std::string fullName = mRoot + "/" + fileName;
 
 	std::hash<std::string> hasher;
@@ -85,12 +89,17 @@ SoundId SoundEffectManager::Load(const char* fileName)
 	}
 
 	return hash;
+#else
+	(void)fileName;
+	return 0;
+#endif
 }
 
 //----------------------------------------------------------------------------------------------------
 
 void SoundEffectManager::Clear()
 {
+#ifdef _WIN32
 	AudioSystem::Get()->mAudioEngine->Suspend();
 
 	for (auto& item : mInventory)
@@ -103,6 +112,7 @@ void SoundEffectManager::Clear()
 			item.second.reset();
 		}
 	}
+#endif
 	mInventory.clear();
 }
 
@@ -110,6 +120,7 @@ void SoundEffectManager::Clear()
 
 void SoundEffectManager::Play(SoundId id, bool loop)
 {
+#ifdef _WIN32
 	auto iter = mInventory.find(id);
 	if (iter != mInventory.end())
 	{
@@ -122,15 +133,23 @@ void SoundEffectManager::Play(SoundId id, bool loop)
 			iter->second->effect->Play();
 		}
 	}
+#else
+	(void)id;
+	(void)loop;
+#endif
 }
 
 //----------------------------------------------------------------------------------------------------
 
 void SoundEffectManager::Stop(SoundId id)
 {
+#ifdef _WIN32
 	auto iter = mInventory.find(id);
 	if (iter != mInventory.end())
 	{
 		iter->second->instance->Stop(true);
 	}
+#else
+	(void)id;
+#endif
 }

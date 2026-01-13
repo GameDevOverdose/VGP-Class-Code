@@ -1,6 +1,6 @@
 // DirectXTK MakeSpriteFont tool
 //
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 //
 // http://go.microsoft.com/fwlink/?LinkId=248929
@@ -142,9 +142,9 @@ namespace MakeSpriteFont
                 usedPixels += (glyph.Width * glyph.Height);
             }
 
-            float utilization = ( (float)usedPixels / (float)(width * height) ) * 100;
+            float utilization = ((float)usedPixels / (float)(width * height)) * 100;
 
-            Console.WriteLine("Packing efficiency {0}%", utilization );
+            Console.WriteLine("Packing efficiency {0}%", utilization);
 
             return output;
         }

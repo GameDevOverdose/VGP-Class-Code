@@ -8,7 +8,7 @@
 
 #pragma once
 
-#include <ImGui/Inc/imgui.h>
+#include <ImGui/imgui.h>
 
 #include <array>
 #include <map>

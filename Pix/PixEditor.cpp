@@ -9,7 +9,7 @@
 #include "Graphics.h"
 #include "VariableCache.h"
 #include "Viewport.h"
-#include <ImGui/Inc/imgui.h>
+#include <ImGui/imgui.h>
 
 namespace
 {
@@ -80,11 +80,11 @@ bool PixEditor::Run(float deltaTime)
 
 	// Check hotkeys
 	const ImGuiIO& io = ImGui::GetIO();
-	if (ImGui::IsKeyPressed(VK_F5))
+	if (ImGui::IsKeyPressed(ImGuiKey_F5))
 		Run();
 	if (io.KeyCtrl)
 	{
-		if (ImGui::IsKeyPressed('S', false))
+		if (ImGui::IsKeyPressed(ImGuiKey_S, false))
 		{
 			if (io.KeyShift)
 				SaveAs();
@@ -235,12 +235,13 @@ void PixEditor::ShowLogo()
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
 
 	ImGui::Begin("Logo", nullptr, windowFlags);
-	ImGui::Image(
+	ImGui::ImageWithBg(
 		X::GetSprite(mLogo),
-		{ (float)X::GetSpriteWidth(mLogo), (float)X::GetSpriteHeight(mLogo) },
-		{ 0.0f, 0.0f },
-		{ 1.0f, 1.0f },
-		{ 1.0f, 1.0f, 1.0f, 0.1f });
+		ImVec2((float)X::GetSpriteWidth(mLogo), (float)X::GetSpriteHeight(mLogo)),
+		ImVec2(0.0f, 0.0f),
+		ImVec2(1.0f, 1.0f),
+		ImVec4(0.0f, 0.0f, 0.0f, 0.0f),
+		ImVec4(1.0f, 1.0f, 1.0f, 0.1f));
 	ImGui::End();
 
 	ImGui::PopStyleVar(2);
@@ -352,7 +353,7 @@ void PixEditor::ShowRenderView(float deltaTime)
 	}
 
 	char title[128];
-	sprintf_s(title, "Render - fps: %.3f###Render", fps);
+	snprintf(title, sizeof(title), "Render - fps: %.3f###Render", fps);
 	ImGui::Begin(title, &mShowRenderView, ImGuiWindowFlags_AlwaysAutoResize);
 
 	Graphics::NewFrame();
@@ -365,7 +366,7 @@ void PixEditor::ShowRenderView(float deltaTime)
 	ImGui::Image(X::GetRenderTexture(), { renderTextureWidth, renderTextureHeight });
 
 	mHasDockedWindow = ImGui::IsWindowDocked();
-	
+
 	if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows))
 		mLastFocusedScriptWindowId.clear();
 
@@ -383,12 +384,13 @@ void PixEditor::ShowAboutDialog()
 		const ImVec2 windowSize = ImGui::GetWindowSize();
 
 		ImGui::SetCursorPosX((windowSize.x - imageWidth) * 0.5f);
-		ImGui::Image(
+		ImGui::ImageWithBg(
 			X::GetSprite(mLogoAbout),
-			{ imageWidth, imageHeight },
-			{ 0.0f, 0.0f },
-			{ 1.0f, 1.0f },
-			{ 1.0f, 1.0f, 1.0f, 0.1f });
+			ImVec2(imageWidth, imageHeight),
+			ImVec2(0.0f, 0.0f),
+			ImVec2(1.0f, 1.0f),
+			ImVec4(0.0f, 0.0f, 0.0f, 0.0f),
+			ImVec4(1.0f, 1.0f, 1.0f, 0.1f));
 
 		ImGui::Separator();
 		ImGui::Text("Pix Editor\n\nCopyright (c) 2020 Peter Chan.\nAll rights reserved.");

@@ -6,7 +6,9 @@
 #ifndef INCLUDED_XENGINE_AUDIOSYSTEM_H
 #define INCLUDED_XENGINE_AUDIOSYSTEM_H
 
+#ifdef _WIN32
 namespace DirectX { class AudioEngine; }
+#endif
 
 namespace X {
 
@@ -32,7 +34,11 @@ public:
 private:
 	friend class SoundEffectManager;
 	
+#ifdef _WIN32
 	DirectX::AudioEngine* mAudioEngine;
+#else
+	void* mAudioEngine;
+#endif
 };
 
 } // namespace X

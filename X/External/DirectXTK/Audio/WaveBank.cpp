@@ -1,7 +1,7 @@
 //--------------------------------------------------------------------------------------
 // File: WaveBank.cpp
 //
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 //
 // http://go.microsoft.com/fwlink/?LinkId=248929
@@ -33,7 +33,9 @@ public:
         mPrepared(false),
         mStreaming(false)
     {
-        assert(mEngine != nullptr);
+        if (!engine)
+            throw std::invalid_argument("AudioEngine is required");
+
         mEngine->RegisterNotify(this, false);
     }
 
@@ -50,10 +52,10 @@ public:
             DebugTrace("WARNING: Destroying WaveBank \"%hs\" with %zu outstanding instances\n",
                 mReader.BankName(), mInstances.size());
 
-            for (auto it = mInstances.begin(); it != mInstances.end(); ++it)
+            for (auto it : mInstances)
             {
-                assert(*it != nullptr);
-                (*it)->OnDestroyParent();
+                assert(it != nullptr);
+                it->OnDestroyParent();
             }
 
             mInstances.clear();
@@ -72,7 +74,7 @@ public:
         }
     }
 
-    HRESULT Initialize(_In_ AudioEngine* engine, _In_z_ const wchar_t* wbFileName) noexcept;
+    HRESULT Initialize(_In_ const AudioEngine* engine, _In_z_ const wchar_t* wbFileName) noexcept;
 
     void Play(unsigned int index, float volume, float pitch, float pan);
 
@@ -125,8 +127,7 @@ public:
     }
 
     void __cdecl OnDestroyParent() noexcept override
-    {
-    }
+    {}
 
     AudioEngine*                        mEngine;
     std::list<IVoiceNotify*>            mInstances;
@@ -138,7 +139,7 @@ public:
 
 
 _Use_decl_annotations_
-HRESULT WaveBank::Impl::Initialize(AudioEngine* engine, const wchar_t* wbFileName) noexcept
+HRESULT WaveBank::Impl::Initialize(const AudioEngine* engine, const wchar_t* wbFileName) noexcept
 {
     if (!engine || !wbFileName)
         return E_INVALIDARG;
@@ -197,7 +198,7 @@ void WaveBank::Impl::Play(unsigned int index, float volume, float pitch, float p
 
     if (pitch != 0.f)
     {
-        float fr = XAudio2SemitonesToFrequencyRatio(pitch * 12.f);
+        const float fr = XAudio2SemitonesToFrequencyRatio(pitch * 12.f);
 
         hr = voice->SetFrequencyRatio(fr);
         ThrowIfFailed(hr);
@@ -227,7 +228,7 @@ void WaveBank::Impl::Play(unsigned int index, float volume, float pitch, float p
     buffer.Flags = XAUDIO2_END_OF_STREAM;
     buffer.pContext = this;
 
-    #ifdef DIRECTX_ENABLE_XWMA
+#ifdef DIRECTX_ENABLE_XWMA
 
     XAUDIO2_BUFFER_WMA wmaBuffer = {};
 
@@ -274,29 +275,13 @@ WaveBank::WaveBank(AudioEngine* engine, const wchar_t* wbFileName)
     }
 
     DebugTrace("INFO: WaveBank \"%hs\" with %u entries loaded from .xwb file \"%ls\"\n",
-               pImpl->mReader.BankName(), pImpl->mReader.Count(), wbFileName);
+        pImpl->mReader.BankName(), pImpl->mReader.Count(), wbFileName);
 }
 
 
-// Move constructor.
-WaveBank::WaveBank(WaveBank&& moveFrom) noexcept
-    : pImpl(std::move(moveFrom.pImpl))
-{
-}
-
-
-// Move assignment.
-WaveBank& WaveBank::operator= (WaveBank&& moveFrom) noexcept
-{
-    pImpl = std::move(moveFrom.pImpl);
-    return *this;
-}
-
-
-// Public destructor.
-WaveBank::~WaveBank()
-{
-}
+WaveBank::WaveBank(WaveBank&&) noexcept = default;
+WaveBank& WaveBank::operator= (WaveBank&&) noexcept = default;
+WaveBank::~WaveBank() = default;
 
 
 // Public methods (one-shots)
@@ -314,7 +299,7 @@ void WaveBank::Play(unsigned int index, float volume, float pitch, float pan)
 
 void WaveBank::Play(_In_z_ const char* name)
 {
-    unsigned int index = pImpl->mReader.Find(name);
+    const unsigned int index = pImpl->mReader.Find(name);
     if (index == unsigned(-1))
     {
         DebugTrace("WARNING: Name '%hs' not found in wave bank, one-shot not triggered\n", name);
@@ -327,7 +312,7 @@ void WaveBank::Play(_In_z_ const char* name)
 
 void WaveBank::Play(_In_z_ const char* name, float volume, float pitch, float pan)
 {
-    unsigned int index = pImpl->mReader.Find(name);
+    const unsigned int index = pImpl->mReader.Find(name);
     if (index == unsigned(-1))
     {
         DebugTrace("WARNING: Name '%hs' not found in wave bank, one-shot not triggered\n", name);
@@ -370,7 +355,7 @@ std::unique_ptr<SoundEffectInstance> WaveBank::CreateInstance(unsigned int index
 
 std::unique_ptr<SoundEffectInstance> WaveBank::CreateInstance(_In_z_ const char* name, SOUND_EFFECT_INSTANCE_FLAGS flags)
 {
-    unsigned int index = pImpl->mReader.Find(name);
+    const unsigned int index = pImpl->mReader.Find(name);
     if (index == unsigned(-1))
     {
         // We don't throw an exception here as titles often simply ignore missing assets rather than fail
@@ -413,7 +398,7 @@ std::unique_ptr<SoundStreamInstance> WaveBank::CreateStreamInstance(unsigned int
 
 std::unique_ptr<SoundStreamInstance> WaveBank::CreateStreamInstance(_In_z_ const char* name, SOUND_EFFECT_INSTANCE_FLAGS flags)
 {
-    unsigned int index = pImpl->mReader.Find(name);
+    const unsigned int index = pImpl->mReader.Find(name);
     if (index == unsigned(-1))
     {
         // We don't throw an exception here as titles often simply ignore missing assets rather than fail
@@ -457,6 +442,12 @@ bool WaveBank::IsInUse() const noexcept
 bool WaveBank::IsStreamingBank() const noexcept
 {
     return pImpl->mReader.IsStreamingBank();
+}
+
+
+bool WaveBank::IsAdvancedFormat() const noexcept
+{
+    return (pImpl->mReader.GetWaveAlignment() == 4096);
 }
 
 
@@ -597,13 +588,13 @@ bool WaveBank::GetPrivateData(unsigned int index, void* data, size_t datasize)
 
     switch (datasize)
     {
-        case sizeof(WaveBankReader::Metadata):
+        case sizeof(WaveBankReader::Metadata) :
         {
             auto ptr = reinterpret_cast<WaveBankReader::Metadata*>(data);
             return SUCCEEDED(pImpl->mReader.GetMetadata(index, *ptr));
         }
 
-        case sizeof(WaveBankSeekData):
+        case sizeof(WaveBankSeekData) :
         {
             auto ptr = reinterpret_cast<WaveBankSeekData*>(data);
             return SUCCEEDED(pImpl->mReader.GetSeekTable(index, &ptr->seekTable, ptr->seekCount, ptr->tag));
@@ -613,3 +604,15 @@ bool WaveBank::GetPrivateData(unsigned int index, void* data, size_t datasize)
             return false;
     }
 }
+
+
+//--------------------------------------------------------------------------------------
+// Adapters for /Zc:wchar_t- clients
+#if defined(_MSC_VER) && !defined(_NATIVE_WCHAR_T_DEFINED)
+
+_Use_decl_annotations_
+WaveBank::WaveBank(AudioEngine* engine, const __wchar_t* wbFileName) :
+    WaveBank(engine, reinterpret_cast<const unsigned short*>(wbFileName))
+{}
+
+#endif // !_NATIVE_WCHAR_T_DEFINED

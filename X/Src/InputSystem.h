@@ -7,14 +7,15 @@
 #define INCLUDED_XENGINE_INPUTSYSTEM_H
 
 #include "XTypes.h"
-#include <DirectXTK/Inc/GamePad.h>
+
+struct GLFWwindow;
 
 namespace X {
 
 class InputSystem
 {
 public:
-	static void StaticInitialize(HWND window);
+	static void StaticInitialize(GLFWwindow* window);
 	static void StaticTerminate();
 	static InputSystem* Get();
 
@@ -25,7 +26,7 @@ public:
 	InputSystem(const InputSystem&) = delete;
 	InputSystem& operator=(const InputSystem&) = delete;
 
-	void Initialize(HWND window);
+	void Initialize(GLFWwindow* window);
 	void Terminate();
 
 	void Update();
@@ -85,12 +86,14 @@ public:
 	float GetRightAnalogY(int player) const;
 
 private:
-	friend LRESULT CALLBACK InputSystemMessageHandler(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
+	// GLFW callbacks
+	static void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
+	static void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
+	static void CursorPosCallback(GLFWwindow* window, double xpos, double ypos);
+	static void ScrollCallback(GLFWwindow* window, double xoffset, double yoffset);
+	static void FocusCallback(GLFWwindow* window, int focused);
 
-	HWND mWindow;
-
-	std::unique_ptr<DirectX::GamePad> mGamePad;
-	DirectX::GamePad::State mGamePadState[4];
+	GLFWwindow* mWindow;
 
 	bool mCurrKeys[512];
 	bool mPrevKeys[512];

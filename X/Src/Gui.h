@@ -6,10 +6,12 @@
 #ifndef INCLUDED_XENGINE_GUI_H
 #define INCLUDED_XENGINE_GUI_H
 
+#include <GLFW/glfw3.h>
+
 namespace X {
 namespace Gui {
 
-void Initialize(HWND window);
+void Initialize(GLFWwindow* window);
 void Terminate();
 void BeginRender();
 void EndRender();

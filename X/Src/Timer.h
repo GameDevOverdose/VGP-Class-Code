@@ -6,6 +6,8 @@
 #ifndef INCLUDED_XENGINE_TIMER_H
 #define INCLUDED_XENGINE_TIMER_H
 
+#include <chrono>
+
 namespace X {
 
 class Timer
@@ -21,10 +23,12 @@ public:
 	float GetFramesPerSecond() const;
 
 private:
-	// http://msdn2.microsoft.com/en-us/library/aa383713.aspx
-	LARGE_INTEGER mTicksPerSecond;
-	LARGE_INTEGER mLastTick;
-	LARGE_INTEGER mCurrentTick;
+	using Clock = std::chrono::high_resolution_clock;
+	using TimePoint = std::chrono::time_point<Clock>;
+
+	TimePoint mStartTime;
+	TimePoint mLastTick;
+	TimePoint mCurrentTick;
 	
 	float mElapsedTime;
 	float mTotalTime;
