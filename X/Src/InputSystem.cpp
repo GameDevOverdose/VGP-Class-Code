@@ -11,137 +11,89 @@ using namespace X;
 namespace
 {
 	InputSystem* sInputSystem = nullptr;
-	WindowMessageHandler sPreviousWndProc = 0;
-
-	void ClipToWindow(HWND window)
-	{
-		RECT rect;
-		GetClientRect(window, &rect);
-
-		POINT ul;
-		ul.x = rect.left;
-		ul.y = rect.top;
-
-		POINT lr;
-		lr.x = rect.right;
-		lr.y = rect.bottom;
-
-		MapWindowPoints(window, nullptr, &ul, 1);
-		MapWindowPoints(window, nullptr, &lr, 1);
-
-		rect.left = ul.x;
-		rect.top = ul.y;
-
-		rect.right = lr.x;
-		rect.bottom = lr.y;
-
-		ClipCursor(&rect);
-	}
 }
 
-LRESULT CALLBACK X::InputSystemMessageHandler(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
+// GLFW Callbacks
+void InputSystem::KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
+{
+	(void)window;
+	(void)scancode;
+	(void)mods;
+	
+	if (sInputSystem == nullptr || key < 0 || key >= 512)
+		return;
+	
+	if (action == GLFW_PRESS)
+		sInputSystem->mCurrKeys[key] = true;
+	else if (action == GLFW_RELEASE)
+		sInputSystem->mCurrKeys[key] = false;
+}
+
+void InputSystem::MouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
+{
+	(void)window;
+	(void)mods;
+	
+	if (sInputSystem == nullptr || button < 0 || button >= 3)
+		return;
+	
+	if (action == GLFW_PRESS)
+		sInputSystem->mCurrMouseButtons[button] = true;
+	else if (action == GLFW_RELEASE)
+		sInputSystem->mCurrMouseButtons[button] = false;
+}
+
+void InputSystem::CursorPosCallback(GLFWwindow* window, double xpos, double ypos)
 {
 	if (sInputSystem == nullptr)
+		return;
+	
+	sInputSystem->mCurrMouseX = static_cast<int>(xpos);
+	sInputSystem->mCurrMouseY = static_cast<int>(ypos);
+	
+	if (sInputSystem->mPrevMouseX == -1)
 	{
-		return sPreviousWndProc(window, message, wParam, lParam);
+		sInputSystem->mPrevMouseX = sInputSystem->mCurrMouseX;
+		sInputSystem->mPrevMouseY = sInputSystem->mCurrMouseY;
 	}
-
-	switch (message)
-	{
-		case WM_ACTIVATEAPP:
-		{
-			if (wParam == TRUE)
-			{
-				SetCapture(window);
-			}
-			else
-			{
-				sInputSystem->mMouseLeftEdge = false;
-				sInputSystem->mMouseRightEdge = false;
-				sInputSystem->mMouseTopEdge = false;
-				sInputSystem->mMouseBottomEdge = false;
-				ReleaseCapture();
-			}
-			break;
-		}
-		case WM_LBUTTONDOWN:
-		{
-			sInputSystem->mCurrMouseButtons[0] = true;
-			break;
-		}
-		case WM_LBUTTONUP:
-		{
-			sInputSystem->mCurrMouseButtons[0] = false;
-			break;
-		}
-		case WM_RBUTTONDOWN:
-		{
-			sInputSystem->mCurrMouseButtons[1] = true;
-			break;
-		}
-		case WM_RBUTTONUP:
-		{
-			sInputSystem->mCurrMouseButtons[1] = false;
-			break;
-		}
-		case WM_MBUTTONDOWN:
-		{
-			sInputSystem->mCurrMouseButtons[2] = true;
-			break;
-		}
-		case WM_MBUTTONUP:
-		{
-			sInputSystem->mCurrMouseButtons[2] = false;
-			break;
-		}
-		case WM_MOUSEWHEEL:
-		{
-			sInputSystem->mMouseWheel += (float)GET_WHEEL_DELTA_WPARAM(wParam) / (float)WHEEL_DELTA;
-			break;
-		}
-		case WM_MOUSEMOVE:
-		{
-			int mouseX = (signed short)(lParam);
-			int mouseY = (signed short)(lParam >> 16);
-
-			sInputSystem->mCurrMouseX = mouseX;
-			sInputSystem->mCurrMouseY = mouseY;
-			if (sInputSystem->mPrevMouseX == -1)
-			{
-				sInputSystem->mPrevMouseX = mouseX;
-				sInputSystem->mPrevMouseY = mouseY;
-			}
-
-			RECT rect;
-			GetClientRect(window, &rect);
-			sInputSystem->mMouseLeftEdge = mouseX <= rect.left;
-			sInputSystem->mMouseRightEdge = mouseX + 1 >= rect.right;
-			sInputSystem->mMouseTopEdge = mouseY <= rect.top;
-			sInputSystem->mMouseBottomEdge = mouseY + 1 >= rect.bottom;
-			break;
-		}
-		case WM_KEYDOWN:
-		{
-			if (wParam < 256)
-			{
-				sInputSystem->mCurrKeys[wParam] = true;
-			}
-			break;
-		}
-		case WM_KEYUP:
-		{
-			if (wParam < 256)
-			{
-				sInputSystem->mCurrKeys[wParam] = false;
-			}
-			break;
-		}
-	}
-
-	return sPreviousWndProc(window, message, wParam, lParam);
+	
+	// Update edge detection
+	int width, height;
+	glfwGetWindowSize(window, &width, &height);
+	sInputSystem->mMouseLeftEdge = sInputSystem->mCurrMouseX <= 0;
+	sInputSystem->mMouseRightEdge = sInputSystem->mCurrMouseX >= width - 1;
+	sInputSystem->mMouseTopEdge = sInputSystem->mCurrMouseY <= 0;
+	sInputSystem->mMouseBottomEdge = sInputSystem->mCurrMouseY >= height - 1;
 }
 
-void InputSystem::StaticInitialize(HWND window)
+void InputSystem::ScrollCallback(GLFWwindow* window, double xoffset, double yoffset)
+{
+	(void)window;
+	(void)xoffset;
+	
+	if (sInputSystem == nullptr)
+		return;
+	
+	sInputSystem->mMouseWheel += static_cast<float>(yoffset);
+}
+
+void InputSystem::FocusCallback(GLFWwindow* window, int focused)
+{
+	(void)window;
+	
+	if (sInputSystem == nullptr)
+		return;
+	
+	if (!focused)
+	{
+		sInputSystem->mMouseLeftEdge = false;
+		sInputSystem->mMouseRightEdge = false;
+		sInputSystem->mMouseTopEdge = false;
+		sInputSystem->mMouseBottomEdge = false;
+	}
+}
+
+void InputSystem::StaticInitialize(GLFWwindow* window)
 {
 	XASSERT(sInputSystem == nullptr, "[InputSystem] System already initialized!");
 	sInputSystem = new InputSystem();
@@ -164,9 +116,7 @@ InputSystem* InputSystem::Get()
 }
 
 InputSystem::InputSystem()
-	: mWindow(0)
-	, mGamePad{ nullptr }
-	, mGamePadState{}
+	: mWindow(nullptr)
 	, mClipMouseToWindow(false)
 	, mCurrMouseX(-1)
 	, mCurrMouseY(-1)
@@ -181,12 +131,12 @@ InputSystem::InputSystem()
 	, mMouseBottomEdge(false)
 	, mInitialized(false)
 {
-	ZeroMemory(&mCurrKeys, sizeof(mCurrKeys));
-	ZeroMemory(&mPrevKeys, sizeof(mPrevKeys));
-	ZeroMemory(&mPressedKeys, sizeof(mPressedKeys));
-	ZeroMemory(&mCurrMouseButtons, sizeof(mCurrMouseButtons));
-	ZeroMemory(&mPrevMouseButtons, sizeof(mPrevMouseButtons));
-	ZeroMemory(&mPressedMouseButtons, sizeof(mPressedMouseButtons));
+	memset(mCurrKeys, 0, sizeof(mCurrKeys));
+	memset(mPrevKeys, 0, sizeof(mPrevKeys));
+	memset(mPressedKeys, 0, sizeof(mPressedKeys));
+	memset(mCurrMouseButtons, 0, sizeof(mCurrMouseButtons));
+	memset(mPrevMouseButtons, 0, sizeof(mPrevMouseButtons));
+	memset(mPressedMouseButtons, 0, sizeof(mPressedMouseButtons));
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -198,7 +148,7 @@ InputSystem::~InputSystem()
 
 //----------------------------------------------------------------------------------------------------
 
-void InputSystem::Initialize(HWND window)
+void InputSystem::Initialize(GLFWwindow* window)
 {
 	// Check if we have already initialized the system
 	if (mInitialized)
@@ -209,12 +159,14 @@ void InputSystem::Initialize(HWND window)
 
 	XLOG("[InputSystem] Initializing...");
 	
-	// Hook application to window's procedure
 	mWindow = window;
-	sPreviousWndProc = (WindowMessageHandler)GetWindowLongPtrA(window, GWLP_WNDPROC);
-	SetWindowLongPtrA(window, GWLP_WNDPROC, (LONG_PTR)InputSystemMessageHandler);
-
-	mGamePad = std::make_unique<DirectX::GamePad>();
+	
+	// Set GLFW callbacks
+	glfwSetKeyCallback(window, KeyCallback);
+	glfwSetMouseButtonCallback(window, MouseButtonCallback);
+	glfwSetCursorPosCallback(window, CursorPosCallback);
+	glfwSetScrollCallback(window, ScrollCallback);
+	glfwSetWindowFocusCallback(window, FocusCallback);
 
 	// Set flag
 	mInitialized = true;
@@ -235,8 +187,15 @@ void InputSystem::Terminate()
 
 	XLOG("[InputSystem] Terminating...");
 
-	// Restore original window's procedure
-	SetWindowLongPtrA(mWindow, GWLP_WNDPROC, (LONG_PTR)sPreviousWndProc);
+	// Clear callbacks
+	if (mWindow)
+	{
+		glfwSetKeyCallback(mWindow, nullptr);
+		glfwSetMouseButtonCallback(mWindow, nullptr);
+		glfwSetCursorPosCallback(mWindow, nullptr);
+		glfwSetScrollCallback(mWindow, nullptr);
+		glfwSetWindowFocusCallback(mWindow, nullptr);
+	}
 	mWindow = nullptr;
 
 	// Set flag
@@ -271,36 +230,36 @@ void InputSystem::Update()
 	}
 	memcpy(mPrevMouseButtons, mCurrMouseButtons, sizeof(mCurrMouseButtons));
 
-	for (size_t i = 0; i < std::size(mGamePadState); ++i)
-		mGamePadState[i] = mGamePad->GetState((int)i);
+	// Reset mouse wheel for next frame
+	mMouseWheel = 0.0f;
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsKeyDown(uint32_t key) const
 {
-	return mCurrKeys[key];
+	return key < 512 && mCurrKeys[key];
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsKeyPressed(uint32_t key) const
 {
-	return mPressedKeys[key];
+	return key < 512 && mPressedKeys[key];
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsMouseDown(uint32_t button) const
 {
-	return mCurrMouseButtons[button];
+	return button < 3 && mCurrMouseButtons[button];
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsMousePressed(uint32_t button) const
 {
-	return mPressedMouseButtons[button];
+	return button < 3 && mPressedMouseButtons[button];
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -370,7 +329,10 @@ bool InputSystem::IsMouseBottomEdge() const
 
 void InputSystem::ShowSystemCursor(bool show)
 {
-	ShowCursor(show);
+	if (mWindow)
+	{
+		glfwSetInputMode(mWindow, GLFW_CURSOR, show ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_HIDDEN);
+	}
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -378,6 +340,10 @@ void InputSystem::ShowSystemCursor(bool show)
 void InputSystem::SetMouseClipToWindow(bool clip)
 {
 	mClipMouseToWindow = clip;
+	if (mWindow)
+	{
+		glfwSetInputMode(mWindow, GLFW_CURSOR, clip ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+	}
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -389,175 +355,200 @@ bool InputSystem::IsMouseClipToWindow() const
 
 //----------------------------------------------------------------------------------------------------
 
+// GamePad stubs - GLFW joystick support could be added later
 bool InputSystem::IsGamePadConnected(int player) const
 {
-	return mGamePadState[player].connected;
+	return glfwJoystickPresent(player) == GLFW_TRUE;
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsAPressed(int player) const
 {
-	return mGamePadState[player].IsAPressed();
+	(void)player;
+	return false; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsBPressed(int player) const
 {
-	return mGamePadState[player].IsBPressed();
+	(void)player;
+	return false; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsXPressed(int player) const
 {
-	return mGamePadState[player].IsXPressed();
+	(void)player;
+	return false; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsYPressed(int player) const
 {
-	return mGamePadState[player].IsYPressed();
+	(void)player;
+	return false; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsLeftShoulderPressed(int player) const
 {
-	return mGamePadState[player].IsLeftShoulderPressed();
+	(void)player;
+	return false; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsLeftTriggerPressed(int player) const
 {
-	return mGamePadState[player].IsLeftTriggerPressed();
+	(void)player;
+	return false; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsRightShoulderPressed(int player) const
 {
-	return mGamePadState[player].IsRightShoulderPressed();
+	(void)player;
+	return false; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsRightTriggerPressed(int player) const
 {
-	return mGamePadState[player].IsRightTriggerPressed();
+	(void)player;
+	return false; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsDPadUp(int player) const
 {
-	return mGamePadState[player].IsDPadUpPressed();
+	(void)player;
+	return false; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsDPadDown(int player) const
 {
-	return mGamePadState[player].IsDPadDownPressed();
+	(void)player;
+	return false; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsDPadLeft(int player) const
 {
-	return mGamePadState[player].IsDPadLeftPressed();
+	(void)player;
+	return false; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsDPadRight(int player) const
 {
-	return mGamePadState[player].IsDPadRightPressed();
+	(void)player;
+	return false; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsLeftThumbStickUp(int player) const
 {
-	return mGamePadState[player].IsLeftThumbStickUp();
+	(void)player;
+	return false; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsLeftThumbStickDown(int player) const
 {
-	return mGamePadState[player].IsLeftThumbStickDown();
+	(void)player;
+	return false; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsLeftThumbStickLeft(int player) const
 {
-	return mGamePadState[player].IsLeftThumbStickLeft();
+	(void)player;
+	return false; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsLeftThumbStickRight(int player) const
 {
-	return mGamePadState[player].IsLeftThumbStickRight();
+	(void)player;
+	return false; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsRightThumbStickUp(int player) const
 {
-	return mGamePadState[player].IsRightThumbStickUp();
+	(void)player;
+	return false; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsRightThumbStickDown(int player) const
 {
-	return mGamePadState[player].IsRightThumbStickDown();
+	(void)player;
+	return false; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsRightThumbStickLeft(int player) const
 {
-	return mGamePadState[player].IsRightThumbStickLeft();
+	(void)player;
+	return false; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 bool InputSystem::IsRightThumbStickRight(int player) const
 {
-	return mGamePadState[player].IsRightThumbStickRight();
+	(void)player;
+	return false; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 float InputSystem::GetLeftAnalogX(int player) const
 {
-	return mGamePadState[player].thumbSticks.leftX;
+	(void)player;
+	return 0.0f; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 float InputSystem::GetLeftAnalogY(int player) const
 {
-	return mGamePadState[player].thumbSticks.leftY;
+	(void)player;
+	return 0.0f; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 float InputSystem::GetRightAnalogX(int player) const
 {
-	return mGamePadState[player].thumbSticks.rightX;
+	(void)player;
+	return 0.0f; // Stub
 }
 
 //----------------------------------------------------------------------------------------------------
 
 float InputSystem::GetRightAnalogY(int player) const
 {
-	return mGamePadState[player].thumbSticks.rightY;
+	(void)player;
+	return 0.0f; // Stub
 }

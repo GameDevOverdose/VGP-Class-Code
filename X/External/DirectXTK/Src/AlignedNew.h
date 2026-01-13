@@ -1,7 +1,7 @@
 //--------------------------------------------------------------------------------------
 // File: AlignedNew.h
 //
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 //
 // http://go.microsoft.com/fwlink/?LinkId=248929
@@ -12,9 +12,9 @@
 
 #include <cstddef>
 #include <cstdlib>
-#include <exception>
+#include <new>
 
-#ifdef WIN32
+#ifdef _WIN32
 #include <malloc.h>
 #endif
 
@@ -39,13 +39,13 @@ namespace DirectX
             static_assert(alignment > 8, "AlignedNew is only useful for types with > 8 byte alignment. Did you forget a __declspec(align) on TDerived?");
             static_assert(((alignment - 1) & alignment) == 0, "AlignedNew only works with power of two alignment");
 
-#ifdef WIN32
+        #ifdef _WIN32
             void* ptr = _aligned_malloc(size, alignment);
-#else
-            // This C++17 Standard Library function is currently NOT
-            // implemented for the Microsoft Standard C++ Library.
+        #else
+                    // This C++17 Standard Library function is currently NOT
+                    // implemented for the Microsoft Standard C++ Library.
             void* ptr = aligned_alloc(alignment, size);
-#endif
+        #endif
             if (!ptr)
                 throw std::bad_alloc();
 
@@ -56,11 +56,11 @@ namespace DirectX
         // Free aligned memory.
         static void operator delete (void* ptr)
         {
-#ifdef WIN32
+        #ifdef _WIN32
             _aligned_free(ptr);
-#else
+        #else
             free(ptr);
-#endif
+        #endif
         }
 
 

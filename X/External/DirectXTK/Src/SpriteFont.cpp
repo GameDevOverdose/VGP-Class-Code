@@ -1,7 +1,7 @@
 //--------------------------------------------------------------------------------------
 // File: SpriteFont.cpp
 //
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 //
 // http://go.microsoft.com/fwlink/?LinkId=248929
@@ -33,18 +33,18 @@ public:
         size_t glyphCount,
         float lineSpacing) noexcept(false);
 
+    Impl(const Impl&) = delete;
+    Impl& operator=(const Impl&) = delete;
+
+    Impl(Impl&&) = default;
+    Impl& operator=(Impl&&) = default;
+
     Glyph const* FindGlyph(wchar_t character) const;
 
     void SetDefaultCharacter(wchar_t character);
 
     template<typename TAction>
     void ForEachGlyph(_In_z_ wchar_t const* text, TAction action, bool ignoreWhitespace) const;
-
-    void CreateTextureResource(_In_ ID3D11Device* device,
-        uint32_t width, uint32_t height,
-        DXGI_FORMAT format,
-        uint32_t stride, uint32_t rows,
-        _In_reads_(stride * rows) const uint8_t* data) noexcept(false);
 
     const wchar_t* ConvertUTF8(_In_z_ const char *text) noexcept(false);
 
@@ -56,6 +56,12 @@ public:
     float lineSpacing;
 
 private:
+    void CreateTextureResource(_In_ ID3D11Device* device,
+        uint32_t width, uint32_t height,
+        DXGI_FORMAT format,
+        uint32_t stride, uint32_t rows,
+        _In_reads_(stride * rows) const uint8_t* data) noexcept(false);
+
     size_t utfBufferSize;
     std::unique_ptr<wchar_t[]> utfBuffer;
 };
@@ -93,10 +99,13 @@ SpriteFont::Impl::Impl(
     ID3D11Device* device,
     BinaryReader* reader,
     bool forceSRGB) noexcept(false) :
-        defaultGlyph(nullptr),
-        lineSpacing(0),
-        utfBufferSize(0)
+    defaultGlyph(nullptr),
+    lineSpacing(0),
+    utfBufferSize(0)
 {
+    if (!device || !reader)
+        throw std::invalid_argument("Direct3D device is null");
+
     // Validate the header.
     for (char const* magic = spriteFontMagic; *magic; magic++)
     {
@@ -131,7 +140,7 @@ SpriteFont::Impl::Impl(
     auto textureStride = reader->Read<uint32_t>();
     auto textureRows = reader->Read<uint32_t>();
 
-    uint64_t dataSize = uint64_t(textureStride) * uint64_t(textureRows);
+    const uint64_t dataSize = uint64_t(textureStride) * uint64_t(textureRows);
     if (dataSize > UINT32_MAX)
     {
         DebugTrace("ERROR: SpriteFont provided with an invalid .spritefont file\n");
@@ -162,12 +171,17 @@ SpriteFont::Impl::Impl(
     Glyph const* iglyphs,
     size_t glyphCount,
     float ilineSpacing) noexcept(false) :
-        texture(itexture),
-        glyphs(iglyphs, iglyphs + glyphCount),
-        defaultGlyph(nullptr),
-        lineSpacing(ilineSpacing),
-        utfBufferSize(0)
+    texture(itexture),
+    glyphs(iglyphs, iglyphs + glyphCount),
+    defaultGlyph(nullptr),
+    lineSpacing(ilineSpacing),
+    utfBufferSize(0)
 {
+    if (!itexture || !iglyphs)
+    {
+        throw std::invalid_argument("Sprite sheet texture required");
+    }
+
     if (!std::is_sorted(iglyphs, iglyphs + glyphCount))
     {
         throw std::runtime_error("Glyphs must be in ascending codepoint order");
@@ -251,41 +265,41 @@ void SpriteFont::Impl::ForEachGlyph(_In_z_ wchar_t const* text, TAction action, 
 
     for (; *text; text++)
     {
-        wchar_t character = *text;
+        const wchar_t character = *text;
 
         switch (character)
         {
-            case '\r':
-                // Skip carriage returns.
-                continue;
+        case '\r':
+            // Skip carriage returns.
+            continue;
 
-            case '\n':
-                // New line.
+        case '\n':
+            // New line.
+            x = 0;
+            y += lineSpacing;
+            break;
+
+        default:
+            // Output this character.
+            auto glyph = FindGlyph(character);
+
+            x += glyph->XOffset;
+
+            if (x < 0)
                 x = 0;
-                y += lineSpacing;
-                break;
 
-            default:
-                // Output this character.
-                auto glyph = FindGlyph(character);
+            const float advance = float(glyph->Subrect.right) - float(glyph->Subrect.left) + glyph->XAdvance;
 
-                x += glyph->XOffset;
+            if (!ignoreWhitespace
+                || !iswspace(character)
+                || ((glyph->Subrect.right - glyph->Subrect.left) > 1)
+                || ((glyph->Subrect.bottom - glyph->Subrect.top) > 1))
+            {
+                action(glyph, x, y, advance);
+            }
 
-                if (x < 0)
-                    x = 0;
-
-                float advance = float(glyph->Subrect.right) - float(glyph->Subrect.left) + glyph->XAdvance;
-
-                if (!ignoreWhitespace
-                    || !iswspace(character)
-                    || ((glyph->Subrect.right - glyph->Subrect.left) > 1)
-                    || ((glyph->Subrect.bottom - glyph->Subrect.top) > 1))
-                {
-                    action(glyph, x, y, advance);
-                }
-
-                x += advance;
-                break;
+            x += advance;
+            break;
         }
     }
 }
@@ -299,7 +313,7 @@ void SpriteFont::Impl::CreateTextureResource(
     uint32_t stride, uint32_t rows,
     const uint8_t* data) noexcept(false)
 {
-    uint64_t sliceBytes = uint64_t(stride) * uint64_t(rows);
+    const uint64_t sliceBytes = uint64_t(stride) * uint64_t(rows);
     if (sliceBytes > UINT32_MAX)
     {
         DebugTrace("ERROR: SpriteFont provided with an invalid .spritefont file\n");
@@ -387,29 +401,12 @@ SpriteFont::SpriteFont(ID3D11Device* device, uint8_t const* dataBlob, size_t dat
 _Use_decl_annotations_
 SpriteFont::SpriteFont(ID3D11ShaderResourceView* texture, Glyph const* glyphs, size_t glyphCount, float lineSpacing)
     : pImpl(std::make_unique<Impl>(texture, glyphs, glyphCount, lineSpacing))
-{
-}
+{}
 
 
-// Move constructor.
-SpriteFont::SpriteFont(SpriteFont&& moveFrom) noexcept
-    : pImpl(std::move(moveFrom.pImpl))
-{
-}
-
-
-// Move assignment.
-SpriteFont& SpriteFont::operator= (SpriteFont&& moveFrom) noexcept
-{
-    pImpl = std::move(moveFrom.pImpl);
-    return *this;
-}
-
-
-// Public destructor.
-SpriteFont::~SpriteFont()
-{
-}
+SpriteFont::SpriteFont(SpriteFont&&) noexcept = default;
+SpriteFont& SpriteFont::operator= (SpriteFont&&) noexcept = default;
+SpriteFont::~SpriteFont() = default;
 
 
 // Wide-character / UTF-16LE
@@ -434,9 +431,9 @@ void XM_CALLCONV SpriteFont::DrawString(_In_ SpriteBatch* spriteBatch, _In_z_ wc
 void XM_CALLCONV SpriteFont::DrawString(_In_ SpriteBatch* spriteBatch, _In_z_ wchar_t const* text, FXMVECTOR position, FXMVECTOR color, float rotation, FXMVECTOR origin, GXMVECTOR scale, SpriteEffects effects, float layerDepth) const
 {
     static_assert(SpriteEffects_FlipHorizontally == 1 &&
-                  SpriteEffects_FlipVertically == 2, "If you change these enum values, the following tables must be updated to match");
+        SpriteEffects_FlipVertically == 2, "If you change these enum values, the following tables must be updated to match");
 
-    // Lookup table indicates which way to move along each axis per SpriteEffects enum value.
+// Lookup table indicates which way to move along each axis per SpriteEffects enum value.
     static XMVECTORF32 axisDirectionTable[4] =
     {
         { { { -1, -1, 0, 0 } } },
@@ -467,24 +464,24 @@ void XM_CALLCONV SpriteFont::DrawString(_In_ SpriteBatch* spriteBatch, _In_z_ wc
 
     // Draw each character in turn.
     pImpl->ForEachGlyph(text, [&](Glyph const* glyph, float x, float y, float advance)
-    {
-        UNREFERENCED_PARAMETER(advance);
-
-        XMVECTOR offset = XMVectorMultiplyAdd(XMVectorSet(x, y + glyph->YOffset, 0, 0), axisDirectionTable[effects & 3], baseOffset);
-
-        if (effects)
         {
-            // For mirrored characters, specify bottom and/or right instead of top left.
-            XMVECTOR glyphRect = XMConvertVectorIntToFloat(XMLoadInt4(reinterpret_cast<uint32_t const*>(&glyph->Subrect)), 0);
+            UNREFERENCED_PARAMETER(advance);
 
-            // xy = glyph width/height.
-            glyphRect = XMVectorSubtract(XMVectorSwizzle<2, 3, 0, 1>(glyphRect), glyphRect);
+            XMVECTOR offset = XMVectorMultiplyAdd(XMVectorSet(x, y + glyph->YOffset, 0, 0), axisDirectionTable[effects & 3], baseOffset);
 
-            offset = XMVectorMultiplyAdd(glyphRect, axisIsMirroredTable[effects & 3], offset);
-        }
+            if (effects)
+            {
+                // For mirrored characters, specify bottom and/or right instead of top left.
+                XMVECTOR glyphRect = XMConvertVectorIntToFloat(XMLoadInt4(reinterpret_cast<uint32_t const*>(&glyph->Subrect)), 0);
 
-        spriteBatch->Draw(pImpl->texture.Get(), position, &glyph->Subrect, color, rotation, offset, scale, effects, layerDepth);
-    }, true);
+                // xy = glyph width/height.
+                glyphRect = XMVectorSubtract(XMVectorSwizzle<2, 3, 0, 1>(glyphRect), glyphRect);
+
+                offset = XMVectorMultiplyAdd(glyphRect, axisIsMirroredTable[effects & 3], offset);
+            }
+
+            spriteBatch->Draw(pImpl->texture.Get(), position, &glyph->Subrect, color, rotation, offset, scale, effects, layerDepth);
+        }, true);
 }
 
 
@@ -496,7 +493,7 @@ XMVECTOR XM_CALLCONV SpriteFont::MeasureString(_In_z_ wchar_t const* text, bool 
         {
             UNREFERENCED_PARAMETER(advance);
 
-            auto w = static_cast<float>(glyph->Subrect.right - glyph->Subrect.left);
+            const auto w = static_cast<float>(glyph->Subrect.right - glyph->Subrect.left);
             auto h = static_cast<float>(glyph->Subrect.bottom - glyph->Subrect.top) + glyph->YOffset;
 
             h = iswspace(wchar_t(glyph->Character)) ?
@@ -516,17 +513,17 @@ RECT SpriteFont::MeasureDrawBounds(_In_z_ wchar_t const* text, XMFLOAT2 const& p
 
     pImpl->ForEachGlyph(text, [&](Glyph const* glyph, float x, float y, float advance) noexcept
         {
-            auto isWhitespace = iswspace(wchar_t(glyph->Character));
-            auto w = static_cast<float>(glyph->Subrect.right - glyph->Subrect.left);
-            auto h = isWhitespace ?
+            const auto isWhitespace = iswspace(wchar_t(glyph->Character));
+            const auto w = static_cast<float>(glyph->Subrect.right - glyph->Subrect.left);
+            const auto h = isWhitespace ?
                 pImpl->lineSpacing :
                 static_cast<float>(glyph->Subrect.bottom - glyph->Subrect.top);
 
-            float minX = position.x + x;
-            float minY = position.y + y + (isWhitespace ? 0.0f : glyph->YOffset);
+            const float minX = position.x + x;
+            const float minY = position.y + y + (isWhitespace ? 0.0f : glyph->YOffset);
 
-            float maxX = std::max(minX + advance, minX + w);
-            float maxY = minY + h;
+            const float maxX = std::max(minX + advance, minX + w);
+            const float maxY = minY + h;
 
             if (minX < float(result.left))
                 result.left = long(minX);
@@ -652,3 +649,70 @@ void SpriteFont::GetSpriteSheet(ID3D11ShaderResourceView** texture) const
 
     ThrowIfFailed(pImpl->texture.CopyTo(texture));
 }
+
+
+//--------------------------------------------------------------------------------------
+// Adapters for /Zc:wchar_t- clients
+
+#if defined(_MSC_VER) && !defined(_NATIVE_WCHAR_T_DEFINED)
+
+SpriteFont::SpriteFont(_In_ ID3D11Device* device, _In_z_ __wchar_t const* fileName, bool forceSRGB) :
+    SpriteFont(device, reinterpret_cast<const unsigned short*>(fileName), forceSRGB)
+{}
+
+void SpriteFont::DrawString(_In_ SpriteBatch* spriteBatch, _In_z_ __wchar_t const* text, XMFLOAT2 const& position, FXMVECTOR color, float rotation, XMFLOAT2 const& origin, float scale, SpriteEffects effects, float layerDepth) const
+{
+    DrawString(spriteBatch, reinterpret_cast<const unsigned short*>(text), XMLoadFloat2(&position), color, rotation, XMLoadFloat2(&origin), XMVectorReplicate(scale), effects, layerDepth);
+}
+
+void SpriteFont::DrawString(_In_ SpriteBatch* spriteBatch, _In_z_ __wchar_t const* text, XMFLOAT2 const& position, FXMVECTOR color, float rotation, XMFLOAT2 const& origin, XMFLOAT2 const& scale, SpriteEffects effects, float layerDepth) const
+{
+    DrawString(spriteBatch, reinterpret_cast<const unsigned short*>(text), XMLoadFloat2(&position), color, rotation, XMLoadFloat2(&origin), XMLoadFloat2(&scale), effects, layerDepth);
+}
+
+void SpriteFont::DrawString(_In_ SpriteBatch* spriteBatch, _In_z_ __wchar_t const* text, FXMVECTOR position, FXMVECTOR color, float rotation, FXMVECTOR origin, float scale, SpriteEffects effects, float layerDepth) const
+{
+    DrawString(spriteBatch, reinterpret_cast<const unsigned short*>(text), position, color, rotation, origin, XMVectorReplicate(scale), effects, layerDepth);
+}
+
+void XM_CALLCONV SpriteFont::DrawString(_In_ SpriteBatch* spriteBatch, _In_z_ __wchar_t const* text, FXMVECTOR position, FXMVECTOR color, float rotation, FXMVECTOR origin, GXMVECTOR scale, SpriteEffects effects, float layerDepth) const
+{
+    DrawString(spriteBatch, reinterpret_cast<const unsigned short*>(text), position, color, rotation, origin, scale, effects, layerDepth);
+}
+
+XMVECTOR SpriteFont::MeasureString(_In_z_ __wchar_t const* text, bool ignoreWhitespace) const
+{
+    return MeasureString(reinterpret_cast<const unsigned short*>(text), ignoreWhitespace);
+}
+
+RECT SpriteFont::MeasureDrawBounds(_In_z_ __wchar_t const* text, XMFLOAT2 const& position, bool ignoreWhitespace) const
+{
+    return MeasureDrawBounds(reinterpret_cast<const unsigned short*>(text), position, ignoreWhitespace);
+}
+
+RECT SpriteFont::MeasureDrawBounds(_In_z_ __wchar_t const* text, FXMVECTOR position, bool ignoreWhitespace) const
+{
+    XMFLOAT2 pos;
+    XMStoreFloat2(&pos, position);
+
+    return MeasureDrawBounds(reinterpret_cast<const unsigned short*>(text), pos, ignoreWhitespace);
+}
+
+// Can't do this for GetDefaultCharacter since it only differs by return type.
+
+void SpriteFont::SetDefaultCharacter(__wchar_t character)
+{
+    pImpl->SetDefaultCharacter(static_cast<unsigned short>(character));
+}
+
+bool SpriteFont::ContainsCharacter(__wchar_t character) const
+{
+    return ContainsCharacter(static_cast<unsigned short>(character));
+}
+
+SpriteFont::Glyph const* SpriteFont::FindGlyph(__wchar_t character) const
+{
+    return pImpl->FindGlyph(static_cast<unsigned short>(character));
+}
+
+#endif // !_NATIVE_WCHAR_T_DEFINED

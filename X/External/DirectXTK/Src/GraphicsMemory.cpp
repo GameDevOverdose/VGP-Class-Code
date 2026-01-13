@@ -1,7 +1,7 @@
 //--------------------------------------------------------------------------------------
 // File: GraphicsMemory.cpp
 //
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 //
 // http://go.microsoft.com/fwlink/?LinkId=248929
@@ -56,9 +56,17 @@ public:
         s_graphicsMemory = nullptr;
     }
 
+    Impl(const Impl&) = delete;
+    Impl& operator=(const Impl&) = delete;
+
+    Impl(Impl&&) = default;
+    Impl& operator=(Impl&&) = default;
+
     void Initialize(_In_ ID3D11DeviceX* device, unsigned int backBufferCount)
     {
-        assert(device != nullptr);
+        if (!device)
+            throw std::invalid_argument("Direct3D device is null");
+
         mDevice = device;
 
         device->GetImmediateContextX(mDeviceContext.GetAddressOf());
@@ -110,8 +118,8 @@ public:
             }
 
             mGrfxMemory = VirtualAlloc(nullptr, mPageSize,
-                                       MEM_LARGE_PAGES | MEM_GRAPHICS | MEM_RESERVE | MEM_COMMIT,
-                                       PAGE_WRITECOMBINE | PAGE_READWRITE | PAGE_GPU_READONLY);
+                MEM_LARGE_PAGES | MEM_GRAPHICS | MEM_RESERVE | MEM_COMMIT,
+                PAGE_WRITECOMBINE | PAGE_READWRITE | PAGE_GPU_READONLY);
             if (!mGrfxMemory)
                 throw std::bad_alloc();
         }
@@ -180,12 +188,12 @@ public:
 
         void Clear()
         {
-            for (auto it = mPages.begin(); it != mPages.end(); ++it)
+            for (auto& it : mPages)
             {
-                if (it->mGrfxMemory)
+                if (it.mGrfxMemory)
                 {
-                    VirtualFree(it->mGrfxMemory, 0, MEM_RELEASE);
-                    it->mGrfxMemory = nullptr;
+                    VirtualFree(it.mGrfxMemory, 0, MEM_RELEASE);
+                    it.mGrfxMemory = nullptr;
                 }
             }
 
@@ -239,9 +247,11 @@ public:
         s_graphicsMemory = nullptr;
     }
 
-    void Initialize(_In_ ID3D11Device* device, unsigned int backBufferCount) noexcept
+    void Initialize(_In_ ID3D11Device* device, unsigned int backBufferCount)
     {
-        UNREFERENCED_PARAMETER(device);
+        if (!device)
+            throw std::invalid_argument("Direct3D device is null");
+
         UNREFERENCED_PARAMETER(backBufferCount);
     }
 
@@ -254,8 +264,7 @@ public:
     }
 
     void Commit() noexcept
-    {
-    }
+    {}
 
     GraphicsMemory*  mOwner;
 
@@ -269,7 +278,9 @@ GraphicsMemory::Impl* GraphicsMemory::Impl::s_graphicsMemory = nullptr;
 
 //--------------------------------------------------------------------------------------
 
+#ifdef _MSC_VER
 #pragma warning( disable : 4355 )
+#endif
 
 // Public constructor.
 #if defined(_XBOX_ONE) && defined(_TITLE)
@@ -301,9 +312,7 @@ GraphicsMemory& GraphicsMemory::operator= (GraphicsMemory&& moveFrom) noexcept
 
 
 // Public destructor.
-GraphicsMemory::~GraphicsMemory()
-{
-}
+GraphicsMemory::~GraphicsMemory() = default;
 
 
 void* GraphicsMemory::Allocate(_In_opt_ ID3D11DeviceContext* context, size_t size, int alignment)

@@ -1,6 +1,6 @@
 // DirectXTK MakeSpriteFont tool
 //
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 //
 // http://go.microsoft.com/fwlink/?LinkId=248929
@@ -28,7 +28,7 @@ namespace MakeSpriteFont
         // Glyph image data (may only use a portion of a larger bitmap).
         public Bitmap Bitmap;
         public Rectangle Subrect;
-        
+
 
         // Layout information.
         public float XOffset;

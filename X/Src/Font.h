@@ -6,9 +6,6 @@
 #ifndef INCLUDED_XENGINE_FONT_H
 #define INCLUDED_XENGINE_FONT_H
 
-interface IFW1Factory;
-interface IFW1FontWrapper;
-
 namespace X {
 
 class Font
@@ -22,10 +19,6 @@ public:
 
 	float GetStringWidth(const wchar_t* str, float size) const;
 	void Draw(const wchar_t* str, float x, float y, float size, uint32_t color);
-
-private:
-	IFW1Factory* mFW1Factory;
-	IFW1FontWrapper* mFontWrapper;
 };
 
 } // namespace X

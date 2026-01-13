@@ -1,7 +1,7 @@
 //--------------------------------------------------------------------------------------
 // File: BinaryReader.h
 //
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 //
 // http://go.microsoft.com/fwlink/?LinkId=248929
@@ -27,9 +27,12 @@ namespace DirectX
         explicit BinaryReader(_In_z_ wchar_t const* fileName) noexcept(false);
         BinaryReader(_In_reads_bytes_(dataSize) uint8_t const* dataBlob, size_t dataSize) noexcept;
 
+        BinaryReader(BinaryReader&&) noexcept;
+        BinaryReader& operator= (BinaryReader&&) noexcept;
+
         BinaryReader(BinaryReader const&) = delete;
         BinaryReader& operator= (BinaryReader const&) = delete;
-        
+
         // Reads a single value.
         template<typename T> T const& Read()
         {
@@ -40,7 +43,7 @@ namespace DirectX
         // Reads an array of values.
         template<typename T> T const* ReadArray(size_t elementCount)
         {
-            static_assert(std::is_pod<T>::value, "Can only read plain-old-data types");
+            static_assert(std::is_standard_layout<T>::value, "Can only read plain-old-data types");
 
             uint8_t const* newPos = mPos + sizeof(T) * elementCount;
 

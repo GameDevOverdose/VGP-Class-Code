@@ -8,14 +8,16 @@
 // For a more full-featured builder, see XACT 3 and the XACTBLD tool in the legacy
 // DirectX SDK (June 2010) release.
 //
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 //
 // http://go.microsoft.com/fwlink/?LinkId=248929
 //--------------------------------------------------------------------------------------
 
+#ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4005)
+#endif
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #define NODRAWTEXT
@@ -24,9 +26,16 @@
 #define NOMCX
 #define NOSERVICE
 #define NOHELP
+#ifdef _MSC_VER
 #pragma warning(pop)
+#endif
 
 #include <Windows.h>
+#include <dxgiformat.h>
+
+#if __cplusplus < 201703L
+#error Requires C++17 (and /Zc:__cplusplus with MSVC)
+#endif
 
 #include <algorithm>
 #include <cassert>
@@ -34,14 +43,25 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cwchar>
+#include <cwctype>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <list>
+#include <locale>
 #include <memory>
+#include <set>
+#include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
 #include "WAVFileReader.h"
+
+#define TOOL_VERSION 0
+#include "CmdLineHelpers.h"
+
+using namespace Helpers;
 
 #ifdef __INTEL_COMPILER
 #pragma warning(disable : 161)
@@ -63,33 +83,31 @@
 #ifndef WAVE_FORMAT_XMA2
 #define WAVE_FORMAT_XMA2 0x166
 
-#pragma pack(push,1)
 struct XMA2WAVEFORMATEX
 {
     WAVEFORMATEX wfx;
     // Meaning of the WAVEFORMATEX fields here:
-    //    wFormatTag;        // Audio format type; always WAVE_FORMAT_XMA2
-    //    nChannels;         // Channel count of the decoded audio
-    //    nSamplesPerSec;    // Sample rate of the decoded audio
-    //    nAvgBytesPerSec;   // Used internally by the XMA encoder
-    //    nBlockAlign;       // Decoded sample size; channels * wBitsPerSample / 8
-    //    wBitsPerSample;    // Bits per decoded mono sample; always 16 for XMA
-    //    cbSize;            // Size in bytes of the rest of this structure (34)
+    //    wFormatTag;       // Audio format type; always WAVE_FORMAT_XMA2
+    //    nChannels;        // Channel count of the decoded audio
+    //    nSamplesPerSec;   // Sample rate of the decoded audio
+    //    nAvgBytesPerSec;  // Used internally by the XMA encoder
+    //    nBlockAlign;      // Decoded sample size; channels * wBitsPerSample / 8
+    //    wBitsPerSample;   // Bits per decoded mono sample; always 16 for XMA
+    //    cbSize;           // Size in bytes of the rest of this structure (34)
 
-    WORD  NumStreams;        // Number of audio streams (1 or 2 channels each)
-    DWORD ChannelMask;       // Spatial positions of the channels in this file,
-                             // stored as SPEAKER_xxx values (see audiodefs.h)
-    DWORD SamplesEncoded;    // Total number of PCM samples per channel the file decodes to
-    DWORD BytesPerBlock;     // XMA block size (but the last one may be shorter)
-    DWORD PlayBegin;         // First valid sample in the decoded audio
-    DWORD PlayLength;        // Length of the valid part of the decoded audio
-    DWORD LoopBegin;         // Beginning of the loop region in decoded sample terms
-    DWORD LoopLength;        // Length of the loop region in decoded sample terms
-    BYTE  LoopCount;         // Number of loop repetitions; 255 = infinite
-    BYTE  EncoderVersion;    // Version of XMA encoder that generated the file
-    WORD  BlockCount;        // XMA blocks in file (and entries in its seek table)
+    WORD  NumStreams;       // Number of audio streams (1 or 2 channels each)
+    DWORD ChannelMask;      // Spatial positions of the channels in this file,
+                            // stored as SPEAKER_xxx values (see audiodefs.h)
+    DWORD SamplesEncoded;   // Total number of PCM samples per channel the file decodes to
+    DWORD BytesPerBlock;    // XMA block size (but the last one may be shorter)
+    DWORD PlayBegin;        // First valid sample in the decoded audio
+    DWORD PlayLength;       // Length of the valid part of the decoded audio
+    DWORD LoopBegin;        // Beginning of the loop region in decoded sample terms
+    DWORD LoopLength;       // Length of the loop region in decoded sample terms
+    BYTE  LoopCount;        // Number of loop repetitions; 255 = infinite
+    BYTE  EncoderVersion;   // Version of XMA encoder that generated the file
+    WORD  BlockCount;       // XMA blocks in file (and entries in its seek table)
 };
-#pragma pack(pop)
 #endif
 
 static_assert(sizeof(XMA2WAVEFORMATEX) == 52, "Mismatch of XMA2 type");
@@ -100,16 +118,6 @@ static_assert(sizeof(XMA2WAVEFORMATEX) == 52, "Mismatch of XMA2 type");
 
 namespace
 {
-    struct handle_closer { void operator()(HANDLE h) { if (h) CloseHandle(h); } };
-
-    using ScopedHandle = std::unique_ptr<void, handle_closer>;
-
-    inline HANDLE safe_handle(HANDLE h) { return (h == INVALID_HANDLE_VALUE) ? nullptr : h; }
-
-    struct find_closer { void operator()(HANDLE h) { assert(h != INVALID_HANDLE_VALUE); if (h) FindClose(h); } };
-
-    using ScopedFindHandle = std::unique_ptr<void, find_closer>;
-
 #define BLOCKALIGNPAD(a, b) \
     ((((a) + ((b) - 1)) / (b)) * (b))
 
@@ -117,14 +125,17 @@ namespace
 
 #pragma pack(push, 1)
 
-    static const size_t DVD_SECTOR_SIZE = 2048;
+    constexpr size_t DVD_SECTOR_SIZE = 2048;
 
-    static const size_t ALIGNMENT_MIN = 4;
-    static const size_t ALIGNMENT_DVD = DVD_SECTOR_SIZE;
+    // Advanced format (4K native) disk
+    constexpr size_t ALIGNMENT_ADVANCED_FORMAT = 4096;
 
-    static const size_t MAX_COMPACT_DATA_SEGMENT_SIZE = 0x001FFFFF;
+    constexpr size_t ALIGNMENT_MIN = 4;
+    constexpr size_t ALIGNMENT_DVD = DVD_SECTOR_SIZE;
 
-    static const size_t ENTRYNAME_LENGTH = 64;
+    constexpr size_t MAX_COMPACT_DATA_SEGMENT_SIZE = 0x001FFFFF;
+
+    constexpr size_t ENTRYNAME_LENGTH = 64;
 
     struct REGION
     {
@@ -140,8 +151,8 @@ namespace
 
     struct HEADER
     {
-        static const uint32_t SIGNATURE = MAKEFOURCC('W', 'B', 'N', 'D');
-        static const uint32_t VERSION = 44;
+        static constexpr uint32_t SIGNATURE = MAKEFOURCC('W', 'B', 'N', 'D');
+        static constexpr uint32_t VERSION = 44;
 
         enum SEGIDX
         {
@@ -159,19 +170,21 @@ namespace
         REGION      Segments[SEGIDX_COUNT]; // Segment lookup table
     };
 
+#ifdef _MSC_VER
 #pragma warning( disable : 4201 4203 )
+#endif
 
     union MINIWAVEFORMAT
     {
-        static const uint32_t TAG_PCM = 0x0;
-        static const uint32_t TAG_XMA = 0x1;
-        static const uint32_t TAG_ADPCM = 0x2;
-        static const uint32_t TAG_WMA = 0x3;
+        static constexpr uint32_t TAG_PCM = 0x0;
+        static constexpr uint32_t TAG_XMA = 0x1;
+        static constexpr uint32_t TAG_ADPCM = 0x2;
+        static constexpr uint32_t TAG_WMA = 0x3;
 
-        static const uint32_t BITDEPTH_8 = 0x0; // PCM only
-        static const uint32_t BITDEPTH_16 = 0x1; // PCM only
+        static constexpr uint32_t BITDEPTH_8 = 0x0; // PCM only
+        static constexpr uint32_t BITDEPTH_16 = 0x1; // PCM only
 
-        static const size_t ADPCM_BLOCKALIGN_CONVERSION_OFFSET = 22;
+        static constexpr size_t ADPCM_BLOCKALIGN_CONVERSION_OFFSET = 22;
 
         struct
         {
@@ -187,11 +200,11 @@ namespace
 
     struct ENTRY
     {
-        static const uint32_t FLAGS_READAHEAD = 0x00000001;     // Enable stream read-ahead
-        static const uint32_t FLAGS_LOOPCACHE = 0x00000002;     // One or more looping sounds use this wave
-        static const uint32_t FLAGS_REMOVELOOPTAIL = 0x00000004;// Remove data after the end of the loop region
-        static const uint32_t FLAGS_IGNORELOOP = 0x00000008;    // Used internally when the loop region can't be used
-        static const uint32_t FLAGS_MASK = 0x00000008;
+        static constexpr uint32_t FLAGS_READAHEAD = 0x00000001;     // Enable stream read-ahead
+        static constexpr uint32_t FLAGS_LOOPCACHE = 0x00000002;     // One or more looping sounds use this wave
+        static constexpr uint32_t FLAGS_REMOVELOOPTAIL = 0x00000004;// Remove data after the end of the loop region
+        static constexpr uint32_t FLAGS_IGNORELOOP = 0x00000008;    // Used internally when the loop region can't be used
+        static constexpr uint32_t FLAGS_MASK = 0x00000008;
 
         union
         {
@@ -224,17 +237,17 @@ namespace
 
     struct BANKDATA
     {
-        static const size_t BANKNAME_LENGTH = 64;
+        static constexpr size_t BANKNAME_LENGTH = 64;
 
-        static const uint32_t TYPE_BUFFER = 0x00000000;
-        static const uint32_t TYPE_STREAMING = 0x00000001;
-        static const uint32_t TYPE_MASK = 0x00000001;
+        static constexpr uint32_t TYPE_BUFFER = 0x00000000;
+        static constexpr uint32_t TYPE_STREAMING = 0x00000001;
+        static constexpr uint32_t TYPE_MASK = 0x00000001;
 
-        static const uint32_t FLAGS_ENTRYNAMES = 0x00010000;
-        static const uint32_t FLAGS_COMPACT = 0x00020000;
-        static const uint32_t FLAGS_SYNC_DISABLED = 0x00040000;
-        static const uint32_t FLAGS_SEEKTABLES = 0x00080000;
-        static const uint32_t FLAGS_MASK = 0x000F0000;
+        static constexpr uint32_t FLAGS_ENTRYNAMES = 0x00010000;
+        static constexpr uint32_t FLAGS_COMPACT = 0x00020000;
+        static constexpr uint32_t FLAGS_SYNC_DISABLED = 0x00040000;
+        static constexpr uint32_t FLAGS_SEEKTABLES = 0x00080000;
+        static constexpr uint32_t FLAGS_MASK = 0x000F0000;
 
         uint32_t        dwFlags;                        // Bank flags
         uint32_t        dwEntryCount;                   // Number of entries in the bank
@@ -294,7 +307,7 @@ namespace
 
     DWORD EncodeWMABlockAlign(DWORD dwBlockAlign, DWORD dwAvgBytesPerSec)
     {
-        static const uint32_t aWMABlockAlign[] =
+        static const uint32_t aWMABlockAlign[17] =
         {
             929,
             1487,
@@ -315,7 +328,7 @@ namespace
             1280
         };
 
-        static const uint32_t aWMAAvgBytesPerSec[] =
+        static const uint32_t aWMAAvgBytesPerSec[7] =
         {
             12000,
             24000,
@@ -767,64 +780,54 @@ namespace
             return false;
         }
     }
-}
 
+    //////////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////
 
-//////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////
+    const wchar_t* g_ToolName = L"xwbtool";
+    const wchar_t* g_Description = L"Microsoft (R) XACT-style Wave Bank Tool [DirectXTK]";
 
-enum OPTIONS
-{
-    OPT_RECURSIVE = 1,
-    OPT_STREAMING,
-    OPT_OUTPUTFILE,
-    OPT_OUTPUTHEADER,
-    OPT_TOLOWER,
-    OPT_OVERWRITE,
-    OPT_COMPACT,
-    OPT_NOCOMPACT,
-    OPT_FRIENDLY_NAMES,
-    OPT_NOLOGO,
-    OPT_FILELIST,
-    OPT_MAX
-};
+    enum OPTIONS : uint32_t
+    {
+        OPT_RECURSIVE = 1,
+        OPT_STREAMING,
+        OPT_ADVANCED_FORMAT,
+        OPT_TOLOWER,
+        OPT_OVERWRITE,
+        OPT_COMPACT,
+        OPT_NOCOMPACT,
+        OPT_FRIENDLY_NAMES,
+        OPT_NOLOGO,
+        OPT_FLAGS_MAX,
+        OPT_OUTPUTFILE,
+        OPT_OUTPUTHEADER,
+        OPT_FILELIST,
+        OPT_VERSION,
+        OPT_HELP,
+    };
 
-static_assert(OPT_MAX <= 32, "dwOptions is a DWORD bitfield");
+    static_assert(OPT_FLAGS_MAX <= 32, "dwOptions is a unsigned int bitfield");
 
-struct SConversion
-{
-    wchar_t szSrc[MAX_PATH];
-};
+    struct WaveFile
+    {
+        DirectX::WAVData data;
+        size_t conv;
+        MINIWAVEFORMAT miniFmt;
+        std::unique_ptr<uint8_t[]> waveData;
 
-struct SValue
-{
-    LPCWSTR pName;
-    DWORD dwValue;
-};
+        WaveFile() noexcept :
+            data{},
+            conv(0),
+            miniFmt{}
+        {}
 
-struct WaveFile
-{
-    DirectX::WAVData data;
-    size_t conv;
-    MINIWAVEFORMAT miniFmt;
-    std::unique_ptr<uint8_t[]> waveData;
+        WaveFile(WaveFile&) = delete;
+        WaveFile& operator= (WaveFile&) = delete;
 
-    WaveFile() noexcept :
-        data{},
-        conv(0),
-        miniFmt{}
-    {}
+        WaveFile(WaveFile&&) = default;
+    };
 
-    WaveFile(WaveFile&) = delete;
-    WaveFile& operator= (WaveFile&) = delete;
-
-    WaveFile(WaveFile&&) = default;
-    WaveFile& operator= (WaveFile&&) = default;
-};
-
-namespace
-{
     void FileNameToIdentifier(_Inout_updates_all_(count) wchar_t* str, size_t count)
     {
         size_t j = 0;
@@ -836,179 +839,76 @@ namespace
             *c = t;
         }
     }
-}
 
-//////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////
 
-const SValue g_pOptions[] =
-{
-    { L"r",         OPT_RECURSIVE },
-    { L"s",         OPT_STREAMING },
-    { L"o",         OPT_OUTPUTFILE },
-    { L"l",         OPT_TOLOWER },
-    { L"h",         OPT_OUTPUTHEADER },
-    { L"y",         OPT_OVERWRITE },
-    { L"c",         OPT_COMPACT },
-    { L"nc",        OPT_NOCOMPACT },
-    { L"f",         OPT_FRIENDLY_NAMES },
-    { L"nologo",    OPT_NOLOGO },
-    { L"flist",     OPT_FILELIST },
-    { nullptr,      0 }
-};
-
-//////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////
-
-namespace
-{
-#ifdef _PREFAST_
-#pragma prefast(disable : 26018, "Only used with static internal arrays")
-#endif
-
-    DWORD LookupByName(const wchar_t *pName, const SValue *pArray)
+    const SValue<uint32_t> g_pOptions[] =
     {
-        while (pArray->pName)
-        {
-            if (!_wcsicmp(pName, pArray->pName))
-                return pArray->dwValue;
+        { L"r",         OPT_RECURSIVE },
+        { L"s",         OPT_STREAMING },
+        { L"af",        OPT_ADVANCED_FORMAT },
+        { L"o",         OPT_OUTPUTFILE },
+        { L"l",         OPT_TOLOWER },
+        { L"h",         OPT_OUTPUTHEADER },
+        { L"y",         OPT_OVERWRITE },
+        { L"c",         OPT_COMPACT },
+        { L"nc",        OPT_NOCOMPACT },
+        { L"f",         OPT_FRIENDLY_NAMES },
+        { L"nologo",    OPT_NOLOGO },
+        { L"flist",     OPT_FILELIST },
+        { nullptr,      0 }
+    };
 
-            pArray++;
-        }
-
-        return 0;
-    }
-
-    void SearchForFiles(const wchar_t* path, std::list<SConversion>& files, bool recursive)
+    const SValue<uint32_t> g_pOptionsLong[] =
     {
-        // Process files
-        WIN32_FIND_DATAW findData = {};
-        ScopedFindHandle hFile(safe_handle(FindFirstFileExW(path,
-            FindExInfoBasic, &findData,
-            FindExSearchNameMatch, nullptr,
-            FIND_FIRST_EX_LARGE_FETCH)));
-        if (hFile)
-        {
-            for (;;)
-            {
-                if (!(findData.dwFileAttributes & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_DIRECTORY)))
-                {
-                    wchar_t drive[_MAX_DRIVE] = {};
-                    wchar_t dir[_MAX_DIR] = {};
-                    _wsplitpath_s(path, drive, _MAX_DRIVE, dir, _MAX_DIR, nullptr, 0, nullptr, 0);
+        { L"advanced-format",   OPT_ADVANCED_FORMAT },
+        { L"compact",           OPT_COMPACT },
+        { L"file-list",         OPT_FILELIST },
+        { L"friendly-names",    OPT_FRIENDLY_NAMES },
+        { L"help",              OPT_HELP },
+        { L"no-compact",        OPT_NOCOMPACT },
+        { L"overwrite",         OPT_OVERWRITE },
+        { L"streaming",         OPT_STREAMING },
+        { L"to-lowercase",      OPT_TOLOWER },
+        { L"version",           OPT_VERSION },
+        { nullptr,              0 }
+    };
 
-                    SConversion conv = {};
-                    _wmakepath_s(conv.szSrc, drive, dir, findData.cFileName, nullptr);
-                    files.push_back(conv);
-                }
-
-                if (!FindNextFileW(hFile.get(), &findData))
-                    break;
-            }
-        }
-
-        // Process directories
-        if (recursive)
-        {
-            wchar_t searchDir[MAX_PATH] = {};
-            {
-                wchar_t drive[_MAX_DRIVE] = {};
-                wchar_t dir[_MAX_DIR] = {};
-                _wsplitpath_s(path, drive, _MAX_DRIVE, dir, _MAX_DIR, nullptr, 0, nullptr, 0);
-                _wmakepath_s(searchDir, drive, dir, L"*", nullptr);
-            }
-
-            hFile.reset(safe_handle(FindFirstFileExW(searchDir,
-                FindExInfoBasic, &findData,
-                FindExSearchLimitToDirectories, nullptr,
-                FIND_FIRST_EX_LARGE_FETCH)));
-            if (!hFile)
-                return;
-
-            for (;;)
-            {
-                if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-                {
-                    if (findData.cFileName[0] != L'.')
-                    {
-                        wchar_t subdir[MAX_PATH] = {};
-
-                        {
-                            wchar_t drive[_MAX_DRIVE] = {};
-                            wchar_t dir[_MAX_DIR] = {};
-                            wchar_t fname[_MAX_FNAME] = {};
-                            wchar_t ext[_MAX_FNAME] = {};
-                            _wsplitpath_s(path, drive, dir, fname, ext);
-                            wcscat_s(dir, findData.cFileName);
-                            _wmakepath_s(subdir, drive, dir, fname, ext);
-                        }
-
-                        SearchForFiles(subdir, files, recursive);
-                    }
-                }
-
-                if (!FindNextFileW(hFile.get(), &findData))
-                    break;
-            }
-        }
-    }
-
-    void PrintLogo()
-    {
-        wchar_t version[32] = {};
-
-        wchar_t appName[_MAX_PATH] = {};
-        if (GetModuleFileNameW(nullptr, appName, static_cast<DWORD>(std::size(appName))))
-        {
-            DWORD size = GetFileVersionInfoSizeW(appName, nullptr);
-            if (size > 0)
-            {
-                auto verInfo = std::make_unique<uint8_t[]>(size);
-                if (GetFileVersionInfoW(appName, 0, size, verInfo.get()))
-                {
-                    LPVOID lpstr = nullptr;
-                    UINT strLen = 0;
-                    if (VerQueryValueW(verInfo.get(), L"\\StringFileInfo\\040904B0\\ProductVersion", &lpstr, &strLen))
-                    {
-                        wcsncpy_s(version, reinterpret_cast<const wchar_t*>(lpstr), strLen);
-                    }
-                }
-            }
-        }
-
-        if (!*version)
-        {
-            wcscpy_s(version, L"MISSING");
-        }
-
-        wprintf(L"Microsoft (R) XACT-style Wave Bank Tool [DirectXTK] Version %ls\n", version);
-        wprintf(L"Copyright (C) Microsoft Corp. All rights reserved.\n");
-#ifdef _DEBUG
-        wprintf(L"*** Debug build ***\n");
-#endif
-        wprintf(L"\n");
-    }
+    //////////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////
 
     void PrintUsage()
     {
-        PrintLogo();
+        PrintLogo(false, g_ToolName, g_Description);
 
-        wprintf(L"Usage: xwbtool <options> <wav-files>\n");
-        wprintf(L"\n");
-        wprintf(L"   -r                  wildcard filename search is recursive\n");
-        wprintf(L"   -s                  creates a streaming wave bank,\n");
-        wprintf(L"                       otherwise an in-memory bank is created\n");
-        wprintf(L"   -o <filename>       output filename\n");
-        wprintf(L"   -h <h-filename>     output C/C++ header\n");
-        wprintf(L"   -l                  force output filename to lower case\n");
-        wprintf(L"   -y                  overwrite existing output file (if any)\n");
-        wprintf(L"   -c                  force creation of compact wavebank\n");
-        wprintf(L"   -nc                 force creation of non-compact wavebank\n");
-        wprintf(L"   -f                  include entry friendly names\n");
-        wprintf(L"   -nologo             suppress copyright message\n");
-        wprintf(L"   -flist <filename>   use text file with a list of input files (one per line)\n");
+        static const wchar_t* const s_usage =
+            L"Usage: xwbtool <options> [--] <wav-files>\n"
+            L"\n"
+            L"   -r                  wildcard filename search is recursive\n"
+            L"   -flist <filename>, --file-list <filename>\n"
+            L"                       use text file with a list of input files (one per line)\n"
+            L"\n"
+            L"   -s, --streaming          creates a streaming wave bank,\n"
+            L"                            otherwise an in-memory bank is created\n"
+            L"   -af, --advanced-format   for streaming, use 4K instead of 2K alignment\n"
+            L"                            (required for advanced format drives without 512e)\n"
+            L"\n"
+            L"   -o <filename>            output filename\n"
+            L"   -h <h-filename>          output C/C++ header\n"
+            L"   -l, --to-lowercase       force output filename to lower case\n"
+            L"   -y, --overwrite          overwrite existing output file (if any)\n"
+            L"\n"
+            L"   -c, --compact            force creation of compact wavebank\n"
+            L"   -nc, --no-compact        force creation of non-compact wavebank\n"
+            L"   -f, --friendly-names     include entry friendly names\n"
+            L"   -nologo                  suppress copyright message\n"
+            L"\n"
+            L"   '-- ' is needed if any input filepath starts with the '-' or '/' character\n";
+
+        wprintf(L"%ls", s_usage);
     }
 
     const char* GetFormatTagName(WORD wFormatTag)
@@ -1078,38 +978,97 @@ namespace
 int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
 {
     // Parameters and defaults
-    wchar_t szOutputFile[MAX_PATH] = {};
-    wchar_t szHeaderFile[MAX_PATH] = {};
+    std::wstring outputFile;
+    std::wstring headerFile;
 
-    ScopedHandle hFile;
+    // Set locale for output since GetErrorDesc can get localized strings.
+    std::locale::global(std::locale(""));
 
     // Process command line
-    DWORD dwOptions = 0;
+    uint32_t dwOptions = 0;
     std::list<SConversion> conversion;
+    bool allowOpts = true;
 
     for (int iArg = 1; iArg < argc; iArg++)
     {
         PWSTR pArg = argv[iArg];
 
-        if (('-' == pArg[0]) || ('/' == pArg[0]))
+        if (allowOpts && (('-' == pArg[0]) || ('/' == pArg[0])))
         {
-            pArg++;
-            PWSTR pValue;
+            uint32_t dwOption = 0;
+            PWSTR pValue = nullptr;
 
-            for (pValue = pArg; *pValue && (':' != *pValue); pValue++);
-
-            if (*pValue)
-                *pValue++ = 0;
-
-            DWORD dwOption = LookupByName(pArg, g_pOptions);
-
-            if (!dwOption || (dwOptions & (1 << dwOption)))
+            if (('-' == pArg[0]) && ('-' == pArg[1]))
             {
-                PrintUsage();
-                return 1;
+                if (pArg[2] == 0)
+                {
+                    // "-- " is the POSIX standard for "end of options" marking to escape the '-' and '/' characters at the start of filepaths.
+                    allowOpts = false;
+                    continue;
+                }
+                else
+                {
+                    pArg += 2;
+
+                    for (pValue = pArg; *pValue && (':' != *pValue) && ('=' != *pValue); ++pValue);
+
+                    if (*pValue)
+                        *pValue++ = 0;
+
+                    dwOption = LookupByName(pArg, g_pOptionsLong);
+                }
+            }
+            else
+            {
+                pArg++;
+
+                for (pValue = pArg; *pValue && (':' != *pValue) && ('=' != *pValue); ++pValue);
+
+                if (*pValue)
+                    *pValue++ = 0;
+
+                dwOption = LookupByName(pArg, g_pOptions);
+
+                if (!dwOption)
+                {
+                    if (LookupByName(pArg, g_pOptionsLong))
+                    {
+                        wprintf(L"ERROR: did you mean `--%ls` (with two dashes)?\n", pArg);
+                        return 1;
+                    }
+                }
             }
 
-            dwOptions |= 1 << dwOption;
+            switch (dwOption)
+            {
+            case 0:
+                wprintf(L"ERROR: Unknown option: `%ls`\n\nUse %ls --help\n", pArg, g_ToolName);
+                return 1;
+
+            case OPT_FILELIST:
+            case OPT_OUTPUTHEADER:
+            case OPT_OUTPUTFILE:
+                // These don't use flag bits
+                break;
+
+            case OPT_VERSION:
+                PrintLogo(true, g_ToolName, g_Description);
+                return 0;
+
+            case OPT_HELP:
+                PrintUsage();
+                return 0;
+
+            default:
+                if (dwOptions & (UINT32_C(1) << dwOption))
+                {
+                    wprintf(L"ERROR: Duplicate option: `%ls`\n\n", pArg);
+                    return 1;
+                }
+
+                dwOptions |= (UINT32_C(1) << dwOption);
+                break;
+            }
 
             // Handle options with additional value parameter
             switch (dwOption)
@@ -1134,15 +1093,36 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
             switch (dwOption)
             {
             case OPT_OUTPUTFILE:
-                wcscpy_s(szOutputFile, MAX_PATH, pValue);
+                {
+                    std::filesystem::path path(pValue);
+                    outputFile = path.make_preferred().native();
+                }
                 break;
 
             case OPT_OUTPUTHEADER:
-                wcscpy_s(szHeaderFile, MAX_PATH, pValue);
+                {
+                    std::filesystem::path path(pValue);
+                    headerFile = path.make_preferred().native();
+                }
+                break;
+
+            case OPT_ADVANCED_FORMAT:
+                // Must disable compact version to support 4K
+                if (dwOptions & (UINT32_C(1) << OPT_COMPACT))
+                {
+                    wprintf(L"-c and -af are mutually exclusive options\n");
+                    return 1;
+                }
+                dwOptions |= (UINT32_C(1) << OPT_NOCOMPACT);
                 break;
 
             case OPT_COMPACT:
-                if (dwOptions & (1 << OPT_NOCOMPACT))
+                if (dwOptions & (UINT32_C(1) << OPT_ADVANCED_FORMAT))
+                {
+                    wprintf(L"-c and -af are mutually exclusive options\n");
+                    return 1;
+                }
+                if (dwOptions & (UINT32_C(1) << OPT_NOCOMPACT))
                 {
                     wprintf(L"-c and -nc are mutually exclusive options\n");
                     return 1;
@@ -1150,7 +1130,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
                 break;
 
             case OPT_NOCOMPACT:
-                if (dwOptions & (1 << OPT_COMPACT))
+                if (dwOptions & (UINT32_C(1) << OPT_COMPACT))
                 {
                     wprintf(L"-c and -nc are mutually exclusive options\n");
                     return 1;
@@ -1158,52 +1138,27 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
                 break;
 
             case OPT_FILELIST:
-            {
-                std::wifstream inFile(pValue);
-                if (!inFile)
                 {
-                    wprintf(L"Error opening -flist file %ls\n", pValue);
-                    return 1;
-                }
-                wchar_t fname[1024] = {};
-                for (;;)
-                {
-                    inFile >> fname;
+                    std::filesystem::path path(pValue);
+                    std::wifstream inFile(path.make_preferred().c_str());
                     if (!inFile)
-                        break;
-
-                    if (*fname == L'#')
                     {
-                        // Comment
-                    }
-                    else if (*fname == L'-')
-                    {
-                        wprintf(L"Command-line arguments not supported in -flist file\n");
+                        wprintf(L"Error opening -flist file %ls\n", pValue);
                         return 1;
                     }
-                    else if (wcspbrk(fname, L"?*") != nullptr)
-                    {
-                        wprintf(L"Wildcards not supported in -flist file\n");
-                        return 1;
-                    }
-                    else
-                    {
-                        SConversion conv = {};
-                        wcscpy_s(conv.szSrc, MAX_PATH, fname);
-                        conversion.push_back(conv);
-                    }
 
-                    inFile.ignore(1000, '\n');
+                    inFile.imbue(std::locale::classic());
+
+                    ProcessFileList(inFile, conversion);
                 }
-                inFile.close();
-            }
-            break;
+                break;
             }
         }
         else if (wcspbrk(pArg, L"?*") != nullptr)
         {
             size_t count = conversion.size();
-            SearchForFiles(pArg, conversion, (dwOptions & (1 << OPT_RECURSIVE)) != 0);
+            std::filesystem::path path(pArg);
+            SearchForFiles(path.make_preferred(), conversion, (dwOptions & (UINT32_C(1) << OPT_RECURSIVE)) != 0, nullptr);
             if (conversion.size() <= count)
             {
                 wprintf(L"No matching files found for %ls\n", pArg);
@@ -1213,8 +1168,8 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
         else
         {
             SConversion conv = {};
-            wcscpy_s(conv.szSrc, MAX_PATH, pArg);
-
+            std::filesystem::path path(pArg);
+            conv.szSrc = path.make_preferred().native();
             conversion.push_back(conv);
         }
     }
@@ -1226,50 +1181,46 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
         return 0;
     }
 
-    if (~dwOptions & (1 << OPT_NOLOGO))
-        PrintLogo();
+    if (~dwOptions & (UINT32_C(1) << OPT_NOLOGO))
+        PrintLogo(false, g_ToolName, g_Description);
 
     // Determine output file name
-    if (!*szOutputFile)
+    if (outputFile.empty())
     {
-        auto pConv = conversion.begin();
+        std::filesystem::path curpath(conversion.front().szSrc);
 
-        wchar_t ext[_MAX_EXT] = {};
-        wchar_t fname[_MAX_FNAME] = {};
-        _wsplitpath_s(pConv->szSrc, nullptr, 0, nullptr, 0, fname, _MAX_FNAME, ext, _MAX_EXT);
-
-        if (_wcsicmp(ext, L".xwb") == 0)
+        if (_wcsicmp(curpath.extension().c_str(), L".xwb") == 0)
         {
             wprintf(L"ERROR: Need to specify output file via -o\n");
             return 1;
         }
 
-        _wmakepath_s(szOutputFile, nullptr, nullptr, fname, L".xwb");
+        outputFile = curpath.stem().concat(L".xwb").native();
     }
 
-    if (dwOptions & (1 << OPT_TOLOWER))
+    if (dwOptions & (UINT32_C(1) << OPT_TOLOWER))
     {
-        (void)_wcslwr_s(szOutputFile);
+        std::transform(outputFile.begin(), outputFile.end(), outputFile.begin(), towlower);
 
-        if (*szHeaderFile)
+        if (!headerFile.empty())
         {
-            (void)_wcslwr_s(szHeaderFile);
+            std::transform(headerFile.begin(), headerFile.end(), headerFile.begin(), towlower);
         }
     }
 
-    if (~dwOptions & (1 << OPT_OVERWRITE))
+    if (~dwOptions & (UINT32_C(1) << OPT_OVERWRITE))
     {
-        if (GetFileAttributesW(szOutputFile) != INVALID_FILE_ATTRIBUTES)
+        if (GetFileAttributesW(outputFile.c_str()) != INVALID_FILE_ATTRIBUTES)
         {
-            wprintf(L"ERROR: Output file %ls already exists, use -y to overwrite!\n", szOutputFile);
+            wprintf(L"ERROR: Output file %ls already exists, use -y to overwrite!\n", outputFile.c_str());
             return 1;
         }
 
-        if (*szHeaderFile)
+        if (!headerFile.empty())
         {
-            if (GetFileAttributesW(szHeaderFile) != INVALID_FILE_ATTRIBUTES)
+            if (GetFileAttributesW(headerFile.c_str()) != INVALID_FILE_ATTRIBUTES)
             {
-                wprintf(L"ERROR: Output header file %ls already exists!\n", szHeaderFile);
+                wprintf(L"ERROR: Output header file %ls already exists!\n", headerFile.c_str());
                 return 1;
             }
         }
@@ -1286,25 +1237,23 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
     size_t index = 0;
     for (auto pConv = conversion.begin(); pConv != conversion.end(); ++pConv, ++index)
     {
-        wchar_t ext[_MAX_EXT] = {};
-        wchar_t fname[_MAX_FNAME] = {};
-        _wsplitpath_s(pConv->szSrc, nullptr, 0, nullptr, 0, fname, _MAX_FNAME, ext, _MAX_EXT);
-
         // Load source image
         if (pConv != conversion.begin())
             wprintf(L"\n");
 
-        wprintf(L"reading %ls", pConv->szSrc);
+        std::filesystem::path curpath(pConv->szSrc);
+
+        wprintf(L"reading %ls", curpath.c_str());
         fflush(stdout);
 
         WaveFile wave;
         wave.conv = index;
         std::unique_ptr<uint8_t[]> waveData;
 
-        HRESULT hr = DirectX::LoadWAVAudioFromFileEx(pConv->szSrc, waveData, wave.data);
+        HRESULT hr = DirectX::LoadWAVAudioFromFileEx(curpath.c_str(), waveData, wave.data);
         if (FAILED(hr))
         {
-            wprintf(L"\nERROR: Failed to load file (%08X)\n", static_cast<unsigned int>(hr));
+            wprintf(L"\nERROR: Failed to load file (%08X%ls)\n", static_cast<unsigned int>(hr), GetErrorDesc(hr));
             return 1;
         }
 
@@ -1321,14 +1270,19 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
     wprintf(L"\n");
 
     DWORD dwAlignment = ALIGNMENT_MIN;
-    if (dwOptions & (1 << OPT_STREAMING))
-        dwAlignment = ALIGNMENT_DVD;
+    if (dwOptions & (UINT32_C(1) << OPT_STREAMING))
+    {
+        dwAlignment = (dwOptions & (UINT32_C(1) << OPT_ADVANCED_FORMAT)) ? ALIGNMENT_ADVANCED_FORMAT : ALIGNMENT_DVD;
+    }
     else if (xma)
-        dwAlignment = 2048;
+    {
+        // Xbox requires 2K alignment for XMA2
+        dwAlignment = 2048 /* XMA_BYTES_PER_PACKET */;
+    }
 
     // Convert wave format to miniformat, failing if any won't map
     // Check to see if we can use the compact wave bank format
-    bool compact = (dwOptions & (1 << OPT_NOCOMPACT)) ? false : true;
+    bool compact = (dwOptions & (UINT32_C(1) << OPT_NOCOMPACT)) ? false : true;
     int reason = 0;
     uint64_t waveOffset = 0;
 
@@ -1338,7 +1292,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
         {
             auto cit = conversion.cbegin();
             advance(cit, it->conv);
-            wprintf(L"ERROR: Failed encoding %ls\n", cit->szSrc);
+            wprintf(L"ERROR: Failed encoding %ls\n", cit->szSrc.c_str());
             return 1;
         }
 
@@ -1373,7 +1327,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
         reason |= 0x4;
     }
 
-    if ((dwOptions & (1 << OPT_COMPACT)) && !compact)
+    if ((dwOptions & (UINT32_C(1) << OPT_COMPACT)) && !compact)
     {
         wprintf(L"ERROR: Cannot create compact wave bank:\n");
         if (reason & 0x1)
@@ -1395,7 +1349,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
     // Build entry friendly names if requested
     entries.reset(new uint8_t[(compact ? sizeof(ENTRYCOMPACT) : sizeof(ENTRY)) * waves.size()]);
 
-    if (dwOptions & (1 << OPT_FRIENDLY_NAMES))
+    if (dwOptions & (UINT32_C(1) << OPT_FRIENDLY_NAMES))
     {
         entryNames.reset(new char[waves.size() * ENTRYNAME_LENGTH]);
         memset(entryNames.get(), 0, sizeof(char) * waves.size() * ENTRYNAME_LENGTH);
@@ -1422,17 +1376,17 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
             break;
 
         case MINIWAVEFORMAT::TAG_ADPCM:
-        {
-            auto adpcmFmt = reinterpret_cast<const ADPCMEWAVEFORMAT*>(wfx);
-            duration = (uint64_t(it->data.audioBytes) / uint64_t(wfx->nBlockAlign)) * uint64_t(adpcmFmt->wSamplesPerBlock);
-            int partial = it->data.audioBytes % wfx->nBlockAlign;
-            if (partial)
             {
-                if (partial >= (7 * wfx->nChannels))
-                    duration += (uint64_t(partial) * 2 / uint64_t(wfx->nChannels - 12));
+                auto adpcmFmt = reinterpret_cast<const ADPCMEWAVEFORMAT*>(wfx);
+                duration = (uint64_t(it->data.audioBytes) / uint64_t(wfx->nBlockAlign)) * uint64_t(adpcmFmt->wSamplesPerBlock);
+                int partial = it->data.audioBytes % wfx->nBlockAlign;
+                if (partial)
+                {
+                    if (partial >= (7 * wfx->nChannels))
+                        duration += (uint64_t(partial) * 2 / uint64_t(wfx->nChannels - 12));
+                }
             }
-        }
-        break;
+            break;
 
         case MINIWAVEFORMAT::TAG_WMA:
             if (it->data.seekCount > 0)
@@ -1481,13 +1435,15 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
             }
         }
 
-        if (dwOptions & (1 << OPT_FRIENDLY_NAMES))
+        if (dwOptions & (UINT32_C(1) << OPT_FRIENDLY_NAMES))
         {
             auto cit = conversion.cbegin();
             advance(cit, it->conv);
 
-            wchar_t wEntryName[_MAX_FNAME] = {};
-            _wsplitpath_s(cit->szSrc, nullptr, 0, nullptr, 0, wEntryName, _MAX_FNAME, nullptr, 0);
+            std::filesystem::path ename(cit->szSrc);
+
+            wchar_t wEntryName[ENTRYNAME_LENGTH] = {};
+            wcscpy_s(wEntryName, ename.stem().c_str());
 
             int result = WideCharToMultiByte(CP_UTF8, WC_NO_BEST_FIT_CHARS, wEntryName, -1, &entryNames[count * ENTRYNAME_LENGTH], ENTRYNAME_LENGTH, nullptr, nullptr);
             if (result <= 0)
@@ -1502,15 +1458,20 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
     assert(count > 0 && count == waves.size());
 
     // Create wave bank
-    assert(*szOutputFile != 0);
+    assert(!outputFile.empty());
 
-    wprintf(L"writing %ls%ls wavebank %ls w/ %zu entries\n", (compact) ? L"compact " : L"", (dwOptions & (1 << OPT_STREAMING)) ? L"streaming" : L"in-memory", szOutputFile, waves.size());
+    wprintf(L"writing %ls%ls wavebank %ls w/ %zu entries\n", (compact) ? L"compact " : L"", (dwOptions & (UINT32_C(1) << OPT_STREAMING)) ? L"streaming" : L"in-memory", outputFile.c_str(), waves.size());
     fflush(stdout);
 
-    hFile.reset(safe_handle(CreateFileW(szOutputFile, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr)));
+    ScopedHandle hFile(safe_handle(CreateFileW(
+        outputFile.c_str(),
+        GENERIC_WRITE, 0,
+        nullptr,
+        CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
+        nullptr)));
     if (!hFile)
     {
-        wprintf(L"ERROR: Failed opening output file %ls, %lu\n", szOutputFile, GetLastError());
+        wprintf(L"ERROR: Failed opening output file %ls, %lu\n", outputFile.c_str(), GetLastError());
         return 1;
     }
 
@@ -1532,14 +1493,14 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
 
     GetSystemTimeAsFileTime(&data.BuildTime);
 
-    data.dwFlags = (dwOptions & (1 << OPT_STREAMING)) ? BANKDATA::TYPE_STREAMING : BANKDATA::TYPE_BUFFER;
+    data.dwFlags = (dwOptions & (UINT32_C(1) << OPT_STREAMING)) ? BANKDATA::TYPE_STREAMING : BANKDATA::TYPE_BUFFER;
 
     if (seekEntries > 0)
     {
         data.dwFlags |= BANKDATA::FLAGS_SEEKTABLES;
     }
 
-    if (dwOptions & (1 << OPT_FRIENDLY_NAMES))
+    if (dwOptions & (UINT32_C(1) << OPT_FRIENDLY_NAMES))
     {
         data.dwFlags |= BANKDATA::FLAGS_ENTRYNAMES;
         data.dwEntryNameElementSize = ENTRYNAME_LENGTH;
@@ -1557,8 +1518,10 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
     }
 
     {
-        wchar_t wBankName[_MAX_FNAME] = {};
-        _wsplitpath_s(szOutputFile, nullptr, 0, nullptr, 0, wBankName, _MAX_FNAME, nullptr, 0);
+        std::filesystem::path bname(outputFile);
+
+        wchar_t wBankName[BANKDATA::BANKNAME_LENGTH] = {};
+        wcscpy_s(wBankName, bname.stem().c_str());
 
         int result = WideCharToMultiByte(CP_UTF8, WC_NO_BEST_FIT_CHARS, wBankName, -1, data.szBankName, BANKDATA::BANKNAME_LENGTH, nullptr, nullptr);
         if (result <= 0)
@@ -1569,7 +1532,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
 
     if (SetFilePointer(hFile.get(), LONG(segmentOffset), nullptr, FILE_BEGIN) == INVALID_SET_FILE_POINTER)
     {
-        wprintf(L"ERROR: Failed writing bank data to %ls, SFP %lu\n", szOutputFile, GetLastError());
+        wprintf(L"ERROR: Failed writing bank data to %ls, SFP %lu\n", outputFile.c_str(), GetLastError());
         return 1;
     }
 
@@ -1577,7 +1540,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
     if (!WriteFile(hFile.get(), &data, sizeof(data), &bytesWritten, nullptr)
         || bytesWritten != sizeof(data))
     {
-        wprintf(L"ERROR: Failed writing bank data to %ls, %lu\n", szOutputFile, GetLastError());
+        wprintf(L"ERROR: Failed writing bank data to %ls, %lu\n", outputFile.c_str(), GetLastError());
         return 1;
     }
 
@@ -1590,7 +1553,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
 
     if (SetFilePointer(hFile.get(), LONG(segmentOffset), nullptr, FILE_BEGIN) == INVALID_SET_FILE_POINTER)
     {
-        wprintf(L"ERROR: Failed writing entry metadata to %ls, SFP %lu\n", szOutputFile, GetLastError());
+        wprintf(L"ERROR: Failed writing entry metadata to %ls, SFP %lu\n", outputFile.c_str(), GetLastError());
         return 1;
     }
 
@@ -1598,7 +1561,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
     if (!WriteFile(hFile.get(), entries.get(), entryBytes, &bytesWritten, nullptr)
         || bytesWritten != entryBytes)
     {
-        wprintf(L"ERROR: Failed writing entry metadata to %ls, %lu\n", szOutputFile, GetLastError());
+        wprintf(L"ERROR: Failed writing entry metadata to %ls, %lu\n", outputFile.c_str(), GetLastError());
         return 1;
     }
 
@@ -1619,7 +1582,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
 
         if (SetFilePointer(hFile.get(), LONG(segmentOffset), nullptr, FILE_BEGIN) == INVALID_SET_FILE_POINTER)
         {
-            wprintf(L"ERROR: Failed writing seek tables to %ls, SFP %lu\n", szOutputFile, GetLastError());
+            wprintf(L"ERROR: Failed writing seek tables to %ls, SFP %lu\n", outputFile.c_str(), GetLastError());
             return 1;
         }
 
@@ -1666,7 +1629,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
         if (!WriteFile(hFile.get(), seekTables.get(), seekLen, &bytesWritten, nullptr)
             || bytesWritten != seekLen)
         {
-            wprintf(L"ERROR: Failed writing seek tables to %ls, %lu\n", szOutputFile, GetLastError());
+            wprintf(L"ERROR: Failed writing seek tables to %ls, %lu\n", outputFile.c_str(), GetLastError());
             return 1;
         }
 
@@ -1680,13 +1643,13 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
     }
 
     // Write entry names
-    if (dwOptions & (1 << OPT_FRIENDLY_NAMES))
+    if (dwOptions & (UINT32_C(1) << OPT_FRIENDLY_NAMES))
     {
         assert((segmentOffset % 4) == 0);
 
         if (SetFilePointer(hFile.get(), LONG(segmentOffset), nullptr, FILE_BEGIN) == INVALID_SET_FILE_POINTER)
         {
-            wprintf(L"ERROR: Failed writing friendly entry names to %ls, SFP %lu\n", szOutputFile, GetLastError());
+            wprintf(L"ERROR: Failed writing friendly entry names to %ls, SFP %lu\n", outputFile.c_str(), GetLastError());
             return 1;
         }
 
@@ -1694,7 +1657,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
         if (!WriteFile(hFile.get(), entryNames.get(), entryNamesBytes, &bytesWritten, nullptr)
             || bytesWritten != entryNamesBytes)
         {
-            wprintf(L"ERROR: Failed writing friendly entry names to %ls, %lu\n", szOutputFile, GetLastError());
+            wprintf(L"ERROR: Failed writing friendly entry names to %ls, %lu\n", outputFile.c_str(), GetLastError());
             return 1;
         }
 
@@ -1709,22 +1672,22 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
     header.Segments[HEADER::SEGIDX_ENTRYWAVEDATA].dwOffset = segmentOffset;
     header.Segments[HEADER::SEGIDX_ENTRYWAVEDATA].dwLength = uint32_t(waveOffset);
 
-    for (auto it = waves.begin(); it != waves.end(); ++it)
+    for (auto& it : waves)
     {
         if (SetFilePointer(hFile.get(), LONG(segmentOffset), nullptr, FILE_BEGIN) == INVALID_SET_FILE_POINTER)
         {
-            wprintf(L"ERROR: Failed writing audio data to %ls, SFP %lu\n", szOutputFile, GetLastError());
+            wprintf(L"ERROR: Failed writing audio data to %ls, SFP %lu\n", outputFile.c_str(), GetLastError());
             return 1;
         }
 
-        if (!WriteFile(hFile.get(), it->data.startAudio, it->data.audioBytes, &bytesWritten, nullptr)
-            || bytesWritten != it->data.audioBytes)
+        if (!WriteFile(hFile.get(), it.data.startAudio, it.data.audioBytes, &bytesWritten, nullptr)
+            || bytesWritten != it.data.audioBytes)
         {
-            wprintf(L"ERROR: Failed writing audio data to %ls, %lu\n", szOutputFile, GetLastError());
+            wprintf(L"ERROR: Failed writing audio data to %ls, %lu\n", outputFile.c_str(), GetLastError());
             return 1;
         }
 
-        DWORD alignedSize = BLOCKALIGNPAD(it->data.audioBytes, dwAlignment);
+        DWORD alignedSize = BLOCKALIGNPAD(it.data.audioBytes, dwAlignment);
 
         if ((uint64_t(segmentOffset) + alignedSize) > UINT32_MAX)
         {
@@ -1740,42 +1703,44 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
     // Commit wave bank
     if (SetFilePointer(hFile.get(), LONG(segmentOffset), nullptr, FILE_BEGIN) == INVALID_SET_FILE_POINTER)
     {
-        wprintf(L"ERROR: Failed committing output file %ls, EOF %lu\n", szOutputFile, GetLastError());
+        wprintf(L"ERROR: Failed committing output file %ls, EOF %lu\n", outputFile.c_str(), GetLastError());
         return 1;
     }
 
     if (!SetEndOfFile(hFile.get()))
     {
-        wprintf(L"ERROR: Failed committing output file %ls, EOF %lu\n", szOutputFile, GetLastError());
+        wprintf(L"ERROR: Failed committing output file %ls, EOF %lu\n", outputFile.c_str(), GetLastError());
         return 1;
     }
 
     if (SetFilePointer(hFile.get(), 0, nullptr, FILE_BEGIN) == INVALID_SET_FILE_POINTER)
     {
-        wprintf(L"ERROR: Failed committing output file %ls, HDR %lu\n", szOutputFile, GetLastError());
+        wprintf(L"ERROR: Failed committing output file %ls, HDR %lu\n", outputFile.c_str(), GetLastError());
         return 1;
     }
 
     if (!WriteFile(hFile.get(), &header, sizeof(header), &bytesWritten, nullptr)
         || bytesWritten != sizeof(header))
     {
-        wprintf(L"ERROR: Failed committing output file %ls, HDR %lu\n", szOutputFile, GetLastError());
+        wprintf(L"ERROR: Failed committing output file %ls, HDR %lu\n", outputFile.c_str(), GetLastError());
         return 1;
     }
 
     // Write C header if requested
-    if (*szHeaderFile)
+    if (!headerFile.empty())
     {
-        wprintf(L"writing C header %ls\n", szHeaderFile);
+        wprintf(L"writing C header %ls\n", headerFile.c_str());
         fflush(stdout);
 
         FILE* file = nullptr;
-        if (!_wfopen_s(&file, szHeaderFile, L"wt"))
+        if (!_wfopen_s(&file, headerFile.c_str(), L"wt"))
         {
-            wchar_t wBankName[_MAX_FNAME] = {};
-            _wsplitpath_s(szOutputFile, nullptr, 0, nullptr, 0, wBankName, _MAX_FNAME, nullptr, 0);
+            std::filesystem::path bname(outputFile);
 
-            FileNameToIdentifier(wBankName, _MAX_FNAME);
+            wchar_t wBankName[BANKDATA::BANKNAME_LENGTH] = {};
+            wcscpy_s(wBankName, bname.stem().c_str());
+
+            FileNameToIdentifier(wBankName, BANKDATA::BANKNAME_LENGTH);
 
             fprintf_s(file, "#pragma once\n\nenum XACT_WAVEBANK_%ls : unsigned int\n{\n", wBankName);
 
@@ -1785,10 +1750,12 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
                 auto cit = conversion.cbegin();
                 advance(cit, it->conv);
 
-                wchar_t wEntryName[_MAX_FNAME] = {};
-                _wsplitpath_s(cit->szSrc, nullptr, 0, nullptr, 0, wEntryName, _MAX_FNAME, nullptr, 0);
+                std::filesystem::path ename(cit->szSrc);
 
-                FileNameToIdentifier(wEntryName, _MAX_FNAME);
+                wchar_t wEntryName[ENTRYNAME_LENGTH] = {};
+                wcscpy_s(wEntryName, ename.stem().c_str());
+
+                FileNameToIdentifier(wEntryName, ENTRYNAME_LENGTH);
 
                 fprintf_s(file, "    XACT_WAVEBANK_%ls_%ls = %zu,\n", wBankName, wEntryName, windex);
             }
@@ -1799,7 +1766,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
         }
         else
         {
-            wprintf(L"ERROR: Failed writing wave bank C header %ls\n", szHeaderFile);
+            wprintf(L"ERROR: Failed writing wave bank C header %ls\n", headerFile.c_str());
             return 1;
         }
     }

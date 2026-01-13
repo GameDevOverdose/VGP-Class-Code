@@ -1,6 +1,6 @@
 #include "VariableCache.h"
 
-#include <ImGui/Inc/imgui.h>
+#include <ImGui/imgui.h>
 #include <algorithm>
 
 VariableCache* VariableCache::Get()

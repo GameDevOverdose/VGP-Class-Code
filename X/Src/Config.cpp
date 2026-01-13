@@ -30,10 +30,10 @@ public:
 	void Save();
 	void SaveAs(const char* fileName);
 
-	int GetInt(const char* key, int default = 0) const;
-	bool GetBool(const char* key, bool default = false) const;
-	float GetFloat(const char* key, float default = 0.0f) const;
-	const char* GetString(const char* key, const char* default = "") const;
+	int GetInt(const char* key, int defaultValue = 0) const;
+	bool GetBool(const char* key, bool defaultValue = false) const;
+	float GetFloat(const char* key, float defaultValue = 0.0f) const;
+	const char* GetString(const char* key, const char* defaultValue = "") const;
 
 	void SetInt(const char* key, int value);
 	void SetBool(const char* key, bool value);
@@ -56,7 +56,11 @@ void Config::Impl::Load(const char* fileName)
 	}
 
 	FILE* file = nullptr;
+#ifdef _WIN32
 	fopen_s(&file, fileName, "rb");
+#else
+	file = fopen(fileName, "rb");
+#endif
 	if (file == nullptr)
 	{
 		XLOG("[Config] Failed to open config file %s. Default settings will be used.", fileName);
@@ -84,7 +88,11 @@ void Config::Impl::Save()
 void Config::Impl::SaveAs(const char* fileName)
 {
 	FILE* file = nullptr;
+#ifdef _WIN32
 	fopen_s(&file, fileName, "wb");
+#else
+	file = fopen(fileName, "wb");
+#endif
 	if (file == nullptr)
 	{
 		XLOG("[Config] Failed to save config file %s.", fileName);
@@ -101,66 +109,66 @@ void Config::Impl::SaveAs(const char* fileName)
 
 //----------------------------------------------------------------------------------------------------
 
-int Config::Impl::GetInt(const char* key, int default) const
+int Config::Impl::GetInt(const char* key, int defaultValue) const
 {
 	if (!mDocument.IsObject())
 	{
-		return default;
+		return defaultValue;
 	}
 	auto iter = mDocument.FindMember(key);
 	if (iter != mDocument.MemberEnd() && iter->value.IsInt())
 	{
 		return iter->value.GetInt();
 	}
-	return default;
+	return defaultValue;
 }
 
 //----------------------------------------------------------------------------------------------------
 
-bool Config::Impl::GetBool(const char* key, bool default) const
+bool Config::Impl::GetBool(const char* key, bool defaultValue) const
 {
 	if (!mDocument.IsObject())
 	{
-		return default;
+		return defaultValue;
 	}
 	auto iter = mDocument.FindMember(key);
 	if (iter != mDocument.MemberEnd() && iter->value.IsBool())
 	{
 		return iter->value.GetBool();
 	}
-	return default;
+	return defaultValue;
 }
 
 //----------------------------------------------------------------------------------------------------
 
-float Config::Impl::GetFloat(const char* key, float default) const
+float Config::Impl::GetFloat(const char* key, float defaultValue) const
 {
 	if (!mDocument.IsObject())
 	{
-		return default;
+		return defaultValue;
 	}
 	auto iter = mDocument.FindMember(key);
 	if (iter != mDocument.MemberEnd() && iter->value.IsFloat())
 	{
 		return iter->value.GetFloat();
 	}
-	return default;
+	return defaultValue;
 }
 
 //----------------------------------------------------------------------------------------------------
 
-const char* Config::Impl::GetString(const char* key, const char* default) const
+const char* Config::Impl::GetString(const char* key, const char* defaultValue) const
 {
 	if (!mDocument.IsObject())
 	{
-		return default;
+		return defaultValue;
 	}
 	auto iter = mDocument.FindMember(key);
 	if (iter != mDocument.MemberEnd() && iter->value.IsString())
 	{
 		return iter->value.GetString();
 	}
-	return default;
+	return defaultValue;
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -310,30 +318,30 @@ void Config::SaveAs(const char* fileName)
 
 //----------------------------------------------------------------------------------------------------
 
-int Config::GetInt(const char* key, int default) const
+int Config::GetInt(const char* key, int defaultValue) const
 {
-	return mImpl->GetInt(key, default);
+	return mImpl->GetInt(key, defaultValue);
 }
 
 //----------------------------------------------------------------------------------------------------
 
-bool Config::GetBool(const char* key, bool default) const
+bool Config::GetBool(const char* key, bool defaultValue) const
 {
-	return mImpl->GetBool(key, default);
+	return mImpl->GetBool(key, defaultValue);
 }
 
 //----------------------------------------------------------------------------------------------------
 
-float Config::GetFloat(const char* key, float default) const
+float Config::GetFloat(const char* key, float defaultValue) const
 {
-	return mImpl->GetFloat(key, default);
+	return mImpl->GetFloat(key, defaultValue);
 }
 
 //----------------------------------------------------------------------------------------------------
 
-const char* Config::GetString(const char* key, const char* default) const
+const char* Config::GetString(const char* key, const char* defaultValue) const
 {
-	return mImpl->GetString(key, default);
+	return mImpl->GetString(key, defaultValue);
 }
 
 //----------------------------------------------------------------------------------------------------

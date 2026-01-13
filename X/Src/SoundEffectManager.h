@@ -8,7 +8,9 @@
 
 #include "XTypes.h"
 
+#ifdef _WIN32
 namespace DirectX { class SoundEffect; class SoundEffectInstance; }
+#endif
 
 namespace X {
 
@@ -35,16 +37,20 @@ public:
 	void Stop(SoundId id);
 
 private:
+#ifdef _WIN32
 	struct Entry
 	{
 		std::unique_ptr<DirectX::SoundEffect> effect;
 		std::unique_ptr<DirectX::SoundEffectInstance> instance;
 	};
+	std::unordered_map<std::size_t, std::unique_ptr<Entry>> mInventory;
+#else
+	std::unordered_map<std::size_t, int> mInventory; // Stub
+#endif
 
 	std::string mRoot;
-	std::unordered_map<std::size_t, std::unique_ptr<Entry>> mInventory;
 };
 
-} // namespace Graphics
+} // namespace X
 
 #endif // #ifndef INCLUDED_XENGINE_SOUNDEFFECTMANAGER_H

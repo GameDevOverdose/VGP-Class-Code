@@ -22,11 +22,11 @@ public:
 	void Save();
 	void SaveAs(const char* fileName);
 
-	int GetInt(const char* key, int default = 0) const;
-	bool GetBool(const char* key, bool default = false) const;
-	float GetFloat(const char* key, float default = 0.0f) const;
-	const char* GetString(const char* key, const char* default = "") const;
-
+	int GetInt(const char* key, int defaultValue = 0) const;
+	bool GetBool(const char* key, bool defaultValue = false) const;
+	float GetFloat(const char* key, float defaultValue = 0.0f) const;
+	const char* GetString(const char* key, const char* defaultValue = "") const;
+	
 	void SetInt(const char* key, int value);
 	void SetBool(const char* key, bool value);
 	void SetFloat(const char* key, float value);

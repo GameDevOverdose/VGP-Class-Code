@@ -42,15 +42,18 @@ void VertexShader::Initialize(const char* filename, const char* entryPoint, cons
 	shaderFlags |= D3DCOMPILE_DEBUG;
 #endif
 
-	wchar_t wbuffer[1024];
-	mbstowcs_s(nullptr, wbuffer, filename, 1024);
-
 	ID3DBlob* shaderBlob = nullptr;
 	ID3DBlob* errorBlob = nullptr;
+#if defined(_WIN32)
+	wchar_t wbuffer[1024];
+	mbstowcs_s(nullptr, wbuffer, filename, 1024);
 	HRESULT hr = D3DCompileFromFile(wbuffer, nullptr, nullptr, entryPoint, shaderModel, shaderFlags, 0, &shaderBlob, &errorBlob);
+#else
+	HRESULT hr = D3DCompileFromFile(filename, nullptr, nullptr, entryPoint, shaderModel, shaderFlags, 0, &shaderBlob, &errorBlob);
+#endif
 	if (FAILED(hr) && errorBlob != nullptr)
 	{
-		OutputDebugStringA((char*)errorBlob->GetBufferPointer());
+		XLOG("[VertexShader] Compile error: %s", (char*)errorBlob->GetBufferPointer());
 	}
 	SafeRelease(errorBlob);
 
@@ -76,7 +79,7 @@ void VertexShader::Initialize(const void* buffer, uint32_t size, const char* ent
 	HRESULT hr = D3DCompile(buffer, size, nullptr, nullptr, nullptr, entryPoint, shaderModel, shaderFlags, 0, &shaderBlob, &errorBlob);
 	if (FAILED(hr) && errorBlob != nullptr)
 	{
-		OutputDebugStringA((char*)errorBlob->GetBufferPointer());
+		XLOG("[VertexShader] Compile error: %s", (char*)errorBlob->GetBufferPointer());
 	}
 	SafeRelease(errorBlob);
 	

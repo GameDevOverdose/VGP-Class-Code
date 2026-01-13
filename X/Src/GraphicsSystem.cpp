@@ -6,20 +6,36 @@
 #include "Precompiled.h"
 #include "GraphicsSystem.h"
 
+// Platform-specific native window access
+#if defined(_WIN32)
+    #define GLFW_EXPOSE_NATIVE_WIN32
+    #include <GLFW/glfw3native.h>
+#elif defined(__APPLE__)
+    // Save and undefine DXMT Windows macros that conflict with macOS system headers
+    #pragma push_macro("interface")
+    #pragma push_macro("BOOL")
+    #undef interface
+    #undef BOOL
+
+    #define GLFW_EXPOSE_NATIVE_COCOA
+    #include <GLFW/glfw3native.h>
+
+    // Restore DXMT Windows macros
+    #pragma pop_macro("BOOL")
+    #pragma pop_macro("interface")
+#endif
+
 using namespace X;
 
 namespace
 {
-	HWND sWindow = nullptr;
-	WindowMessageHandler sPreviousWndProc = 0;
-
 	const D3D_DRIVER_TYPE kDriverTypes[] =
 	{
 		D3D_DRIVER_TYPE_HARDWARE,
 		D3D_DRIVER_TYPE_WARP,
 		D3D_DRIVER_TYPE_REFERENCE,
 	};
-	const UINT kNumDriverTypes = ARRAYSIZE(kDriverTypes);
+	const UINT kNumDriverTypes = static_cast<UINT>(std::size(kDriverTypes));
 
 	const D3D_FEATURE_LEVEL kFeatureLevels[] =
 	{
@@ -27,31 +43,20 @@ namespace
 		D3D_FEATURE_LEVEL_10_1,
 		D3D_FEATURE_LEVEL_10_0,
 	};
-	const UINT kNumFeatureLevels = ARRAYSIZE(kFeatureLevels);
+	const UINT kNumFeatureLevels = static_cast<UINT>(std::size(kFeatureLevels));
 
 	GraphicsSystem* sGraphicsSystem = nullptr;
 }
 
-LRESULT CALLBACK X::GraphicsSystemMessageHandler(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
+void GraphicsSystem::FramebufferSizeCallback(GLFWwindow* window, int width, int height)
 {
-	if (sGraphicsSystem)
+	if (sGraphicsSystem != nullptr && width > 0 && height > 0)
 	{
-		switch (message)
-		{
-			case WM_SIZE:
-			{
-				const uint32_t width = static_cast<uint32_t>(LOWORD(lParam));
-				const uint32_t height = static_cast<uint32_t>(HIWORD(lParam));
-				sGraphicsSystem->Resize(width, height);
-				break;
-			}
-		}
+		sGraphicsSystem->Resize(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
 	}
-
-	return CallWindowProcA((WNDPROC)sPreviousWndProc, window, message, wParam, lParam);
 }
 
-void GraphicsSystem::StaticInitialize(HWND window, bool fullscreen)
+void GraphicsSystem::StaticInitialize(GLFWwindow* window, bool fullscreen)
 {
 	XASSERT(sGraphicsSystem == nullptr, "[GraphicsSystem] System already initialized!");
 	sGraphicsSystem = new GraphicsSystem();
@@ -91,38 +96,22 @@ GraphicsSystem::~GraphicsSystem()
 	XASSERT(mD3DDevice == nullptr, "[GraphicsSystem] Terminate() must be called to clean up!");
 }
 
-void GraphicsSystem::Initialize(HWND window, bool fullscreen)
+void GraphicsSystem::Initialize(GLFWwindow* window, bool fullscreen)
 {
-	// Now that we have a window that is displaying, we can continue to set up a Direct3D 11 device.
-	// Setup is necessary if we are going to render any 3D scene. The first thing to do is to create
-	// three objects: a device, an immediate context, and a swap chain. The immediate context is a
-	// new object in Direct3D 11.
+	// Get window dimensions from GLFW
+	int width, height;
+	glfwGetFramebufferSize(window, &width, &height);
 
-	// In Direct3D 11, the immediate context is used by the application to perform rendering onto a
-	// buffer, and the device contains methods to create resources.
-
-	// The swap chain is responsible for taking the buffer to which the device renders, and displaying
-	// the content on the actual monitor screen. The swap chain contains two or more buffers, mainly
-	// the front and the back. These are textures to which the device renders in order to display on
-	// the monitor. The front buffer is what is being presented currently to the user. This buffer is
-	// read-only and cannot be modified. The back buffer is the render target to which the device will
-	// draw. Once it finishes the drawing operation, the swap chain will present the backbuffer by
-	// swapping the two buffers. The back buffer becomes the front buffer, and vice versa.
-
-	RECT rc = { 0 };
-	GetClientRect(window, &rc);
-	UINT width = rc.right - rc.left;
-	UINT height = rc.bottom - rc.top;
+	// Get native window handle for swap chain
+#if defined(_WIN32)
+	HWND nativeWindow = glfwGetWin32Window(window);
+#elif defined(__APPLE__)
+	HWND nativeWindow = (HWND)glfwGetCocoaWindow(window);
+#else
+	#error "Unsupported platform"
+#endif
 
 	UINT createDeviceFlags = 0;
-
-	// To create the swap chain, we fill out a DXGI_SWAPCHAIN_DESC structure that describes the swap
-	// chain we are about to create. A few fields are worth mentioning. BackBufferUsage is a flag that
-	// tells the application how the back buffer will be used. In this case, we want to render to the
-	// back buffer, so we'll set BackBufferUsage to DXGI_USAGE_RENDER_TARGET_OUTPUT. The OutputWindow
-	// field represents the window that the swap chain will use to present images on the screen.
-	// SampleDesc is used to enable multi-sampling. Since this tutorial does not use multi-sampling,
-	// SampleDesc's Count is set to 1 and Quality to 0 to have multi-sampling disabled.
 
 	DXGI_SWAP_CHAIN_DESC descSwapChain;
 	ZeroMemory(&descSwapChain, sizeof(descSwapChain));
@@ -133,7 +122,7 @@ void GraphicsSystem::Initialize(HWND window, bool fullscreen)
 	descSwapChain.BufferDesc.RefreshRate.Numerator = 60;
 	descSwapChain.BufferDesc.RefreshRate.Denominator = 1;
 	descSwapChain.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-	descSwapChain.OutputWindow = window;
+	descSwapChain.OutputWindow = nativeWindow;
 	descSwapChain.SampleDesc.Count = 1;
 	descSwapChain.SampleDesc.Quality = 0;
 	descSwapChain.Windowed = !fullscreen;
@@ -170,18 +159,12 @@ void GraphicsSystem::Initialize(HWND window, bool fullscreen)
 	// Initialize render target and depth stencil views
 	Resize(GetBackBufferWidth(), GetBackBufferHeight());
 
-	// Hook application to window's procedure
-	sWindow = window;
-	sPreviousWndProc = (WindowMessageHandler)GetWindowLongPtrA(window, GWLP_WNDPROC);
-	SetWindowLongPtrA(window, GWLP_WNDPROC, (LONG_PTR)GraphicsSystemMessageHandler);
+	// Set GLFW resize callback
+	glfwSetFramebufferSizeCallback(window, FramebufferSizeCallback);
 }
 
 void GraphicsSystem::Terminate()
 {
-	// Restore original window's procedure
-	SetWindowLongPtrA(sWindow, GWLP_WNDPROC, (LONG_PTR)sPreviousWndProc);
-	sWindow = nullptr;
-
 	SafeRelease(mDisableDepthStencil);
 	SafeRelease(mDepthStencilView);
 	SafeRelease(mDepthStencilBuffer);
@@ -230,7 +213,6 @@ void GraphicsSystem::Resize(uint32_t width, uint32_t height)
 	// Create a render target view
 	ID3D11Texture2D* backBuffer = nullptr;
 	hr = mSwapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer));
-	//hr = mSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID*)&backBuffer);
 	XASSERT(SUCCEEDED(hr), "[GraphicsSystem] Failed to access swap chain buffer.");
 
 	hr = mD3DDevice->CreateRenderTargetView(backBuffer, nullptr, &mRenderTargetView);

@@ -1,7 +1,7 @@
 //--------------------------------------------------------------------------------------
 // File: PrimitiveBatch.cpp
 //
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 //
 // http://go.microsoft.com/fwlink/?LinkId=248929
@@ -14,7 +14,7 @@
 #include "PlatformHelpers.h"
 
 using namespace DirectX;
-using namespace DirectX::Internal;
+using namespace DirectX::DX11::Private;
 using Microsoft::WRL::ComPtr;
 
 
@@ -23,6 +23,12 @@ class PrimitiveBatchBase::Impl
 {
 public:
     Impl(_In_ ID3D11DeviceContext* deviceContext, size_t maxIndices, size_t maxVertices, size_t vertexSize);
+
+    Impl(const Impl&) = delete;
+    Impl& operator=(const Impl&) = delete;
+
+    Impl(Impl&&) = default;
+    Impl& operator=(Impl&&) = default;
 
     void Begin();
     void End();
@@ -50,7 +56,7 @@ private:
 
     size_t mCurrentIndex;
     size_t mCurrentVertex;
-    
+
     size_t mBaseIndex;
     size_t mBaseVertex;
 
@@ -108,7 +114,7 @@ namespace
 
 // Constructor.
 PrimitiveBatchBase::Impl::Impl(_In_ ID3D11DeviceContext* deviceContext, size_t maxIndices, size_t maxVertices, size_t vertexSize)
-  : mMaxIndices(maxIndices),
+    : mMaxIndices(maxIndices),
     mMaxVertices(maxVertices),
     mVertexSize(vertexSize),
     mCurrentTopology(D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED),
@@ -126,6 +132,9 @@ PrimitiveBatchBase::Impl::Impl(_In_ ID3D11DeviceContext* deviceContext, size_t m
     mMappedVertices{}
 #endif
 {
+    if (!deviceContext)
+        throw std::invalid_argument("Direct3D device context is null");
+
     ComPtr<ID3D11Device> device;
     deviceContext->GetDevice(&device);
 
@@ -135,12 +144,12 @@ PrimitiveBatchBase::Impl::Impl(_In_ ID3D11DeviceContext* deviceContext, size_t m
     if (vertexSize > D3D11_REQ_MULTI_ELEMENT_STRUCTURE_SIZE_IN_BYTES)
         throw std::invalid_argument("Vertex size is too large for DirectX 11");
 
-    uint64_t ibBytes = uint64_t(maxIndices) * sizeof(uint16_t);
+    const uint64_t ibBytes = uint64_t(maxIndices) * sizeof(uint16_t);
     if (ibBytes > uint64_t(D3D11_REQ_RESOURCE_SIZE_IN_MEGABYTES_EXPRESSION_A_TERM * 1024u * 1024u)
         || ibBytes > UINT32_MAX)
         throw std::invalid_argument("IB too large for DirectX 11");
 
-    uint64_t vbBytes = uint64_t(maxVertices) * uint64_t(vertexSize);
+    const uint64_t vbBytes = uint64_t(maxVertices) * uint64_t(vertexSize);
     if (vbBytes > uint64_t(D3D11_REQ_RESOURCE_SIZE_IN_MEGABYTES_EXPRESSION_A_TERM * 1024u * 1024u)
         || vbBytes > UINT32_MAX)
         throw std::invalid_argument("VB too large for DirectX 11");
@@ -193,12 +202,12 @@ void PrimitiveBatchBase::Impl::Begin()
 
     // Bind the vertex buffer.
     auto vertexBuffer = mVertexBuffer.Get();
-    UINT vertexStride = static_cast<UINT>(mVertexSize);
-    UINT vertexOffset = 0;
+    const UINT vertexStride = static_cast<UINT>(mVertexSize);
+    constexpr UINT vertexOffset = 0;
 
     mDeviceContext->IASetVertexBuffers(0, 1, &vertexBuffer, &vertexStride, &vertexOffset);
 #endif
-     
+
     // If this is a deferred D3D context, reset position so the first Map calls will use D3D11_MAP_WRITE_DISCARD.
     if (mDeviceContext->GetType() == D3D11_DEVICE_CONTEXT_DEFERRED)
     {
@@ -249,7 +258,7 @@ namespace
     // Helper for locking a vertex or index buffer.
     void LockBuffer(_In_ ID3D11DeviceContext* deviceContext, _In_ ID3D11Buffer* buffer, size_t currentPosition, _Out_ size_t* basePosition, _Out_ D3D11_MAPPED_SUBRESOURCE* mappedResource)
     {
-        D3D11_MAP mapType = (currentPosition == 0) ? D3D11_MAP_WRITE_DISCARD : D3D11_MAP_WRITE_NO_OVERWRITE;
+        const D3D11_MAP mapType = (currentPosition == 0) ? D3D11_MAP_WRITE_DISCARD : D3D11_MAP_WRITE_NO_OVERWRITE;
 
         ThrowIfFailed(
             deviceContext->Map(buffer, 0, mapType, 0, mappedResource)
@@ -278,8 +287,8 @@ void PrimitiveBatchBase::Impl::Draw(D3D11_PRIMITIVE_TOPOLOGY topology, bool isIn
         throw std::logic_error("Begin must be called before Draw");
 
     // Can we merge this primitive in with an existing batch, or must we flush first?
-    bool wrapIndexBuffer = (mCurrentIndex + indexCount > mMaxIndices);
-    bool wrapVertexBuffer = (mCurrentVertex + vertexCount > mMaxVertices);
+    const bool wrapIndexBuffer = (mCurrentIndex + indexCount > mMaxIndices);
+    const bool wrapVertexBuffer = (mCurrentVertex + vertexCount > mMaxVertices);
 
     if ((topology != mCurrentTopology) ||
         (isIndexed != mCurrentlyIndexed) ||
@@ -345,17 +354,17 @@ void PrimitiveBatchBase::Impl::Draw(D3D11_PRIMITIVE_TOPOLOGY topology, bool isIn
         mCurrentTopology = topology;
         mCurrentlyIndexed = isIndexed;
     }
-    
+
     // Copy over the index data.
     if (isIndexed)
     {
         auto outputIndices = static_cast<uint16_t*>(mMappedIndices.pData) + mCurrentIndex;
-        
+
         for (size_t i = 0; i < indexCount; i++)
         {
             outputIndices[i] = static_cast<uint16_t>(indices[i] + mCurrentVertex - mBaseVertex);
         }
- 
+
         mCurrentIndex += indexCount;
     }
 
@@ -420,44 +429,30 @@ void PrimitiveBatchBase::Impl::FlushBatch()
 
 // Public constructor.
 PrimitiveBatchBase::PrimitiveBatchBase(_In_ ID3D11DeviceContext* deviceContext, size_t maxIndices, size_t maxVertices, size_t vertexSize)
-  : pImpl(std::make_unique<Impl>(deviceContext, maxIndices, maxVertices, vertexSize))
-{
-}
+    : pImpl(std::make_unique<Impl>(deviceContext, maxIndices, maxVertices, vertexSize))
+{}
 
 
-// Move constructor.
-PrimitiveBatchBase::PrimitiveBatchBase(PrimitiveBatchBase&& moveFrom) noexcept
-  : pImpl(std::move(moveFrom.pImpl))
-{
-}
+PrimitiveBatchBase::PrimitiveBatchBase(PrimitiveBatchBase&&) noexcept = default;
+PrimitiveBatchBase& PrimitiveBatchBase::operator= (PrimitiveBatchBase&&) noexcept = default;
+PrimitiveBatchBase::~PrimitiveBatchBase() = default;
 
 
-// Move assignment.
-PrimitiveBatchBase& PrimitiveBatchBase::operator= (PrimitiveBatchBase&& moveFrom) noexcept
-{
-    pImpl = std::move(moveFrom.pImpl);
-    return *this;
-}
-
-
-// Public destructor.
-PrimitiveBatchBase::~PrimitiveBatchBase()
-{
-}
-
-
+// Begin a primitive batch.
 void PrimitiveBatchBase::Begin()
 {
     pImpl->Begin();
 }
 
 
+// End/draw a primitive batch.
 void PrimitiveBatchBase::End()
 {
     pImpl->End();
 }
 
 
+// Custom draw method.
 _Use_decl_annotations_
 void PrimitiveBatchBase::Draw(D3D11_PRIMITIVE_TOPOLOGY topology, bool isIndexed, uint16_t const* indices, size_t indexCount, size_t vertexCount, void** pMappedVertices)
 {

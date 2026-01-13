@@ -7,8 +7,14 @@
 #include "Texture.h"
 
 #include "GraphicsSystem.h"
+
+#ifdef _WIN32
 #include <DirectXTK/Inc/DDSTextureLoader.h>
 #include <DirectXTK/Inc/WICTextureLoader.h>
+#else
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb/stb_image.h>
+#endif
 
 using namespace X;
 
@@ -32,6 +38,7 @@ bool Texture::Initialize(const char* fileName)
 {
 	ID3D11Device* device = GraphicsSystem::Get()->GetDevice();
 
+#ifdef _WIN32
 	wchar_t wbuffer[1024];
 	mbstowcs_s(nullptr, wbuffer, fileName, 1024);
 
@@ -64,6 +71,28 @@ bool Texture::Initialize(const char* fileName)
 
 	mWidth = desc.Width;
 	mHeight = desc.Height;
+	SafeRelease(resource);
+#else
+	// Use stb_image on non-Windows platforms
+	int width, height, channels;
+	stbi_set_flip_vertically_on_load(false);
+	unsigned char* data = stbi_load(fileName, &width, &height, &channels, 4); // Force RGBA
+	if (!data)
+	{
+		XLOG("[Texture] Failed to load texture %s: %s", fileName, stbi_failure_reason());
+		return false;
+	}
+
+	bool success = Initialize(data, static_cast<uint32_t>(width), static_cast<uint32_t>(height));
+	stbi_image_free(data);
+	
+	if (!success)
+	{
+		XLOG("[Texture] Failed to create texture from %s", fileName);
+		return false;
+	}
+#endif
+
 	return true;
 }
 
@@ -102,8 +131,12 @@ bool Texture::Initialize(const void* data, uint32_t width, uint32_t height)
 	if (FAILED(hr))
 	{
 		XLOG("[Texture] Failed to create shader resource view. HRESULT: 0x%x)", hr);
+		SafeRelease(texture);
 		return false;
 	}
+
+	mWidth = width;
+	mHeight = height;
 
 	SafeRelease(texture);
 	return true;

@@ -6,9 +6,10 @@
 #include "Precompiled.h"
 #include "AudioSystem.h"
 
+#ifdef _WIN32
 #include <DirectXTK/Inc/Audio.h>
+#endif
 
-using namespace DirectX;
 using namespace X;
 
 namespace
@@ -62,25 +63,33 @@ void AudioSystem::Initialize()
 {
 	XASSERT(mAudioEngine == nullptr, "[AudioSystem] System already initialized.");
 
-	AUDIO_ENGINE_FLAGS flags = AudioEngine_Default;
+#ifdef _WIN32
+	DirectX::AUDIO_ENGINE_FLAGS flags = DirectX::AudioEngine_Default;
 #if defined(_DEBUG)
-	flags = flags | AudioEngine_Debug;
+	flags = flags | DirectX::AudioEngine_Debug;
 #endif
-
 	mAudioEngine = new DirectX::AudioEngine(flags);
+#else
+	// Audio not supported on this platform
+	XLOG("[AudioSystem] Audio not supported on this platform.");
+#endif
 }
 
 //----------------------------------------------------------------------------------------------------
 
 void AudioSystem::Terminate()
 {
+#ifdef _WIN32
 	SafeDelete(mAudioEngine);
+#endif
+	mAudioEngine = nullptr;
 }
 
 //----------------------------------------------------------------------------------------------------
 
 void AudioSystem::Update()
 {
+#ifdef _WIN32
 	if (mAudioEngine && !mAudioEngine->Update())
 	{
 		// No audio device is active
@@ -90,4 +99,5 @@ void AudioSystem::Update()
 			SafeDelete(mAudioEngine);
 		}
 	}
+#endif
 }
